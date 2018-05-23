@@ -70,7 +70,7 @@ if __name__ == '__main__':
     # --- Tracking parameters:
     clutter_density = clutter_per_scan/boundary.area()
 
-    dataset = dataset.Dataset("radardata")
+    dataset = dataset.Dataset("../../Radardata")
     detector = detection.Detection(dataset, detect_data, 0.5)
     dl = dataloader.SimpleDataloader(detector)
 
