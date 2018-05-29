@@ -42,7 +42,7 @@ class GenMurty():
             self.gen_hyps_single_del(scan_node, meas)
 
         cluster.leaves = self.new_leaves
-        print("TOT: Time hyp {:.3f}, {:.3f}".format(self.time_draw, self.time_hyp))
+        #print("TOT: Time hyp {:.3f}, {:.3f}".format(self.time_draw, self.time_hyp))
         return self.new_targets
 
     # def gen_hyps_single(self, scan_node: HypScan, measurements):

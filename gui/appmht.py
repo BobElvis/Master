@@ -3,10 +3,15 @@ from PyQt5.QtWidgets import *
 
 from gui.app import *
 
+ALL_CLUSTERS = -2
+ALL_ALIVE = -1
+
 
 class TrackApp(DynApp):
     def __init__(self, dataloader, background, mht_loader, meas_model, track_gate, i=0):
         self.num_hyps = 200
+        self.num_clusters = 200
+
         self.meas_model = meas_model
         self.track_gate = track_gate
 
@@ -15,14 +20,16 @@ class TrackApp(DynApp):
         self.mht_idx_start_edit = QLineEdit()
         self.mht_idx_last_edit = QLineEdit()
 
+        self.allButton = QPushButton("All Clusters")
+        self.allAliveButton = QPushButton("All Alive Clusters")
         self.layoutTrack = QVBoxLayout()
         self.listClusters = QListWidget()
         self.listHyp = QListWidget()
         self.mht_loader = mht_loader
 
-        self.clusters = None
-        self.hypothesises = None
-        self.updatePending = False
+        self.clusters = []
+        self.selected_hyp_idx = 0
+        self.selected_cluster_idx = ALL_ALIVE
 
         super().__init__(dataloader, background, i=i)
 
@@ -31,6 +38,8 @@ class TrackApp(DynApp):
         # self.listClusters.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
         self.layoutContent.addLayout(self.layoutTrack)
+        self.layoutTrack.addWidget(self.allButton)
+        self.layoutTrack.addWidget(self.allAliveButton)
         self.layoutTrack.addWidget(self.listClusters)
         self.layoutTrack.addWidget(self.listHyp)
 
@@ -39,83 +48,140 @@ class TrackApp(DynApp):
         self.mht_idx_start_edit.setFixedWidth(self.idx_edit_width)
         self.mht_idx_last_edit.setFixedWidth(self.idx_edit_width)
 
+        self.listClusters.setSelectionMode(QListWidget.ExtendedSelection)
         self.listClusters.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         self.listHyp.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
 
     def __createMainView__(self, background):
         return ComboViewTrack(background, self.meas_model, self.track_gate)
 
-    def update_view(self):
-        hyps_list = self.mht_loader[self.i]
-
-        if hyps_list is None or len(hyps_list) == 0:
-            self.clusters = []
-            self.hypothesises = []
-        else:
-            self.clusters = hyps_list
-            self.hypothesises = hyps_list[0][0]
-
-        self.updatePending = True
-        prevCluster = self.listClusters.currentRow()
-        self.updateClusterList(prevCluster)
-        self.updateHypList()
-        self.updatePending = False
-
-    def on_idx_changed(self, curr_i, prev_i):
-        self.update_view()
-
-        # Mht-idx:
-        self.i_mht_end = curr_i if self.i_mht_end == prev_i else self.i_mht_end
-        self.mht_idx_start_edit.setText(str(self.i_mht_start))
-        self.mht_idx_last_edit.setText(str(self.i_mht_end))
-
-        super().on_idx_changed(curr_i, prev_i)
-
-    def updateClusterList(self, cluster_i=None):
-        self.listClusters.clear()
-        for i in range(len(self.clusters)):
-            item = QListWidgetItem('{}: NTGT={}'.format(i + 1, len(self.clusters[i][1])))
-            item.setData(Qt.UserRole, i)
-            self.listClusters.addItem(item)
-
-        cluster_i = len(self.clusters)-1 if None else cluster_i
-        if len(self.clusters) > 0:
-            self.listClusters.setCurrentRow(min(len(self.clusters)-1, cluster_i))
-
-    def updateHypList(self):
-        self.listHyp.clear()
-        n = min(self.num_hyps, len(self.hypothesises))
-        for i in range(0, n):
-            item = QListWidgetItem('{}: {:.4g}%'.format(i + 1, self.hypothesises[i].probability * 100))
-            item.setData(Qt.UserRole, i)
-            self.listHyp.addItem(item)
-        if n > 0:
-            self.listHyp.setCurrentRow(0)
-
     def setListeners(self):
         super().setListeners()
         self.listClusters.currentItemChanged.connect(self.on_cluster_changed)
         self.listHyp.currentItemChanged.connect(self.on_hyp_changed)
+
+        self.allButton.clicked.connect(self.onAllClicked)
+        self.allAliveButton.clicked.connect(self.onAllAliveClicked)
+
         self.mht_idx_start_edit.editingFinished.connect(self.onMhtIdxEdit)
         self.mht_idx_last_edit.editingFinished.connect(self.onMhtFirstIdxEdit)
 
-    def set_track_data(self, hyp):
-        if hyp is None:
-            self.main_view.radarFig.set_track_data([], [])
+    def onAllClicked(self):
+        self.selected_cluster_idx = ALL_CLUSTERS
+        self.update_cluster_list()
+        self.update_hyp_list()
+        self.update_track_data()
+
+    def onAllAliveClicked(self):
+        self.selected_cluster_idx = ALL_ALIVE
+        self.update_cluster_list()
+        self.update_hyp_list()
+        self.update_track_data()
+
+    @staticmethod
+    def get_tracks(hyp):
+        return [t.getTrack() for t in hyp.track_nodes], \
+               [t.getTrack() for t in hyp.track_nodes_del]
+
+    def update_mht_view(self):
+        self.mht_idx_start_edit.setText(str(self.i_mht_start))
+        self.mht_idx_last_edit.setText(str(self.i_mht_end))
+
+        self.update_cluster_list()
+        self.update_hyp_list()
+        self.update_track_data()
+
+    def __setup_data__(self, i):
+        data = self.mht_loader[i]
+        if data is None:
+            self.clusters = []
+        else:
+            dead_clusters, alive_clusters = self.mht_loader[i]
+            self.clusters = [(c, False) for c in dead_clusters] + [(c, True) for c in alive_clusters]
+
+    def on_idx_changed(self, curr_i, prev_i):
+        # Mht-idx:
+        self.i_mht_end = curr_i if self.i_mht_end == prev_i else self.i_mht_end
+
+        # Load mht.
+        if prev_i is not None and prev_i + 1 < curr_i:
+            for i in range(prev_i + 1, curr_i + 1):
+                self.idxEdit.setText("{} ->".format(i))
+                self.main_view.set_scan(self.dataloader[i])
+                self.main_view.update_view()
+                self.__setup_data__(i)
+                self.update_mht_view()
+        else:
+            self.__setup_data__(curr_i)
+
+        super().on_idx_changed(curr_i, prev_i)
+        self.update_mht_view()
+
+    def update_cluster_list(self):
+        print("Updating cluster list.")
+        self.listClusters.clear()
+
+        n_clusters = min(len(self.clusters), self.num_clusters)
+        for idx in range(n_clusters):
+            cluster, alive = self.clusters[idx]
+            item = QListWidgetItem('{}: NTGT={}'.
+                                   format(idx + 1, len(cluster.targets)))
+            item.setData(Qt.UserRole, idx)
+            self.listClusters.addItem(item)
+            if self.selected_cluster_idx == ALL_CLUSTERS:
+                selected = True
+            elif self.selected_cluster_idx == ALL_ALIVE:
+                selected = alive
+            else:
+                selected = idx == self.selected_cluster_idx
+            item.setSelected(selected)
+
+    def update_hyp_list(self):
+        print("Updating hyp list")
+        self.listHyp.clear()
+
+        if self.selected_cluster_idx < 0:
             return
-        tracks = [t.getTrack() for t in hyp.track_nodes]
-        del_tracks = [t.getTrack() for t in hyp.track_nodes_del]
+
+        idx = min(self.selected_cluster_idx, len(self.clusters))
+        cluster = self.clusters[idx][0]
+        n_hyp = min(self.num_hyps, len(cluster.leaves))
+        self.selected_hyp_idx = 0
+        for i in range(0, n_hyp):
+            item = QListWidgetItem('{}: {:.4g}%'.format(i + 1, cluster.leaves[i].probability * 100))
+            item.setData(Qt.UserRole, i)
+            self.listHyp.addItem(item)
+            if i == self.selected_hyp_idx:
+                item.setSelected(True)
+
+    def update_track_data(self):
+        print("Updating track data.")
+        if self.selected_cluster_idx >= 0:
+            cluster, _ = self.clusters[self.selected_cluster_idx]
+            tracks, del_tracks = self.get_tracks(cluster.leaves[self.selected_hyp_idx])
+        else:
+            tracks = []
+            del_tracks = []
+            for cluster, alive in self.clusters:
+                if self.selected_cluster_idx == ALL_ALIVE and not alive:
+                    continue
+                alive_track, del_track = self.get_tracks(cluster.leaves[0])
+                tracks.extend(alive_track)
+                del_tracks.extend(del_track)
         self.main_view.radarFig.set_track_data(tracks, del_tracks)
+        self.main_view.update_view()
 
     def on_cluster_changed(self, curr, prev):
-        self.hypothesises = [] if curr is None else self.clusters[curr.data(Qt.UserRole)][0]
-        self.updateHypList()
+        if curr is None:
+            return
+        i = curr.data(Qt.UserRole)
+        self.selected_cluster_idx = i
+        self.update_hyp_list()
+        self.update_track_data()
 
     def on_hyp_changed(self, curr, prev):
-        hyp = None if curr is None else self.hypothesises[curr.data(Qt.UserRole)]
-        self.set_track_data(hyp)
-        if not self.updatePending:
-            self.main_view.update_view()
+        self.selected_hyp_idx = curr.data(Qt.UserRole)
+        self.update_track_data()
 
     def onMhtIdxEdit(self):
         idx = int(float(self.mht_idx_start_edit.text()))

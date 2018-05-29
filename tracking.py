@@ -2,20 +2,18 @@ from scipy.stats import chi2
 import numpy as np
 import cmath
 import math
-from scipy.stats import multivariate_normal
-import matplotlib.pyplot as plt
-import time
-import util
-import multivariate
 import multivariate as mv
 import model.model as model
 import cv2
+
+MULTI_C_2 = 1/math.sqrt((2*math.pi)**2)
+
 
 class TrackGate2:
     def __init__(self, gate_probability):
         self.gate_probability = gate_probability
         self.gamma = chi2(df=2).ppf(gate_probability)
-        print("Gamma:" + str(self.gamma))
+        print("Track Gate: P = {:.2f}. Gamma: {:.2f}".format(self.gate_probability, self.gamma))
 
     def is_inside(self, track_node, measurement):
         nu = measurement.value - track_node.z_hat
@@ -46,13 +44,21 @@ def innovate_track_nodes(track_nodes, measurement_model):
 
 
 class MeasurementModel:
-    def __init__(self, H, R, F, Q, dt, P_D, P_X):
-        self.H = H
-        self.R = R
-        self.F = F
-        self.Q = Q
+    def __init__(self, q_std_cont, r_std_discrete, dt, P_D, P_X):
+        # State matrices:
+        self.F = np.identity(4)
+        self.F[0, 1] = dt
+        self.F[2, 3] = dt
+        self.Q = np.array([[dt ** 3 / 3, dt ** 2 / 2, 0, 0],
+                      [dt ** 2 / 2, dt, 0, 0],
+                      [0, 0, dt ** 3 / 3, dt ** 2 / 2],
+                      [0, 0, dt ** 2 / 2, dt]]) * (q_std_cont ** 2)
+        self.R = np.identity(2) * (r_std_discrete**2)
+        self.H = np.array([[1, 0, 0, 0], [0, 0, 1, 0]])
+
+        # Other
         self.dt = dt
-        self.Q_correction = self.Q[0, 0]/self.dt**2
+        self.Q_correction = self.Q[0, 0]/(self.dt**2)
         self.P_D = P_D
         self.P_X = P_X
 
@@ -60,15 +66,16 @@ class MeasurementModel:
         mean = np.array([measurement.value[0], measurement.init_speed[0], measurement.value[1], measurement.init_speed[1]])
         vx_std_sq = measurement.init_speed_var[0] - self.Q_correction
         vy_std_sq = measurement.init_speed_var[1] - self.Q_correction
-
         covariance = np.diag((self.R[0,0], vx_std_sq, self.R[1,1], vy_std_sq))
         return mean, covariance
 
-    def predict(self, track_node : model.TrackNode):
+    def predict(self, track_node: model.TrackNode):
         track_node.est_prior = self.F.dot(track_node.est_posterior)
         track_node.cov_prior = self.F.dot(track_node.cov_posterior).dot(self.F.T) + self.Q
         track_node.z_hat = self.H.dot(track_node.est_prior)
         track_node.B = self.H.dot(track_node.cov_prior).dot(self.H.T) + self.R
+        track_node.Binv = np.linalg.inv(track_node.B)
+        track_node.mg = MULTI_C_2/math.sqrt(track_node.B[0, 0]*track_node.B[1, 1])
         track_node.isPosterior = False
         track_node.PD = self.P_D
         track_node.PX = self.P_X
@@ -81,9 +88,9 @@ class MeasurementModel:
 
 
 class ProbMeasModel(MeasurementModel):
-    def __init__(self, H, R, F, Q, dt, PD, PX, land_mask, extent):
+    def __init__(self, q_std_cont, r_std_discrete, dt, PD, PX, land_mask, extent):
         # land_mask:  Area of detectable area.
-        super().__init__(H, R, F, Q, dt, PD, PX)
+        super().__init__(q_std_cont, r_std_discrete, dt, PD, PX)
         self.PO_base = 1 - PD - PX
 
         xlim = (extent[2], extent[3])
@@ -102,7 +109,7 @@ class ProbMeasModel(MeasurementModel):
         X, Y = np.meshgrid(self.x, self.y)
         self.pos = np.dstack((X.T, Y.T))
 
-        print("ProbMeasModel: land-dxy: {}".format(math.sqrt(self.dxy_sq)))
+        print("ProbMeasModel: land-dxy: {:.3f}".format(math.sqrt(self.dxy_sq)))
 
         # Create working arrays:
         self.out = np.empty((nx, ny))
@@ -119,9 +126,9 @@ class ProbMeasModel(MeasurementModel):
         pdf_values[self.land_mask] = 0
 
         integral = np.sum(pdf_values)*self.dxy_sq  # [0, 1]
-        PD_true = (self.P_D + self.P_X)*integral
-        track_node.PD = self.P_D + 2*(integral - 0.5)*self.P_X#max(PD_true, (self.P_D + self.P_X)*0.9)
-        track_node.PX = 1 - track_node.PD - self.PO_base
+        PX_adjusted = self.P_X*(1-integral)
+        track_node.PD = self.P_D/(1-self.P_X)*(1-PX_adjusted)
+        track_node.PX = PX_adjusted
         track_node.i_det = integral
         #print("Track Node: I={:.2f}, {:.2f}:{:.2f}:{:.2f}".
         #      format(integral, PD_true, 1 - track_node.PX - track_node.PD, track_node.PX))

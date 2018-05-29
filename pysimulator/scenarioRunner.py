@@ -1,11 +1,10 @@
-import pymht.tracker as tomht
+#import pymht.tracker as tomht
 import pymht.utils.helpFunctions as hpf
 import xml.etree.ElementTree as ET
 from pymht.utils.xmlDefinitions import *
 from pysimulator.scenarios.defaults import *
 import os
 import datetime
-
 
 def runPreinitializedVariations(scenario, path, pdList, lambdaphiList, nList, nMonteCarlo,
                                 baseSeed, **kwargs):

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 
 
 def readImg(path):
@@ -12,6 +13,12 @@ def readImgGray(path):
     return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
 
+def saveImg(img, path, img_type):
+    if img.dtype == bool:
+        img = img.astype('uint8')
+    cv2.imwrite(path + "." + img_type, img)
+
+
 def readMask(path):
     return readImgGray(path) > 0
 
@@ -20,15 +27,15 @@ def min_max(matrix):
     return np.amin(matrix), np.amax(matrix)
 
 
-def crop_square(mask, range):
-    non_zero = np.nonzero(mask)
+def shrink_mask_square(img, range):
+    non_zero = np.nonzero(img)
     x_min, x_max = min_max(non_zero[0])
     y_min, y_max = min_max(non_zero[1])
-    c = mask.shape[0]/2
+    c = img.shape[0] / 2
     diff = (c-x_min, x_max-c, c-y_min, y_max-c)
     crop = int(round(max(diff)))
     c = int(c)
-    return mask[c-crop:c+crop+1, c-crop:c+crop+1], range * crop/c
+    return crop_img(img, (c-crop, c+crop, c-crop, c+crop)), range * crop/c
 
 
 def shrink_mask(mask, extent=None):
@@ -50,9 +57,11 @@ def calc_extents(img, ext, idxs):
     y2 = idxs[3]/img.shape[1] * (ext[3] - ext[2]) + ext[2]
     return (x1, x2, y1, y2)
 
+
 def crop_img(img, idxs):
     new_img = img[idxs[0]:idxs[1] + 1, idxs[2]:idxs[3] + 1]
     return new_img
+
 
 def get_mask(out_range, resolution, path, in_range):
     mask = readImgGray(path)
@@ -63,7 +72,7 @@ def get_mask(out_range, resolution, path, in_range):
     return cv2.resize(maskCrop, (resolution, resolution), interpolation=cv2.INTER_NEAREST) > 0
 
 
-def get_range_mask(range, fill_range, resolution):
+def create_range_mask(range, fill_range, resolution):
     x = np.linspace(-range, range, resolution, endpoint=True)
     y = np.linspace(-range, range, resolution, endpoint=True)
     X, Y = np.meshgrid(x, y)
@@ -73,8 +82,18 @@ def get_range_mask(range, fill_range, resolution):
 
 def show_heatmap(a):
     plt.imshow(a, cmap='hot', interpolation='nearest')
+    plt.colorbar()
     plt.show()
 
 
-def printnp(matrix):
+def print_np(matrix):
     print(str(matrix.shape) + " - "+ str(matrix.dtype) + " - [" + str(np.amin(matrix)) +", "+ str(np.amax(matrix)) + "]")
+
+
+def excepthook(type, value, tback):
+    # log the exception here
+    # then call the default handler
+    sys.__excepthook__(type, value, tback)
+
+def set_excepthook():
+    sys.excepthook = excepthook  # Traceback when using pyQT.

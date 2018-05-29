@@ -81,7 +81,11 @@ class Background:
         for i in range(1, len(new_img_list)):
             overlay = new_img_list[i]
             bg = blend(bg, overlay[:, :, :3], overlay[:, :, 3])
-        return (bg * 255).astype('uint8'), out_extent
+        bg = np.dstack((bg, new_img_list[0][:, :, 3]))
+        bg -= np.amin(bg)
+        bg /= np.amax(bg)
+        return bg, out_extent
+        #return (bg * 255).astype('uint8'), out_extent
 
 
 

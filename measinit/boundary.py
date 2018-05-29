@@ -90,36 +90,37 @@ def setupBoundary(detect_data, vmax):
     boundary = np.stack((b1, b2), axis=1)
     n = boundary.shape[0]
 
-    # Define (-1 compared to Matlab):
-    outWest, outEast, outNorth = 26, 45, 9
-    remove = np.array([7, 8, 10, 25])
-
-    # Offsets:
+    # # Define (-1 compared to Matlab):
+    # outWest, outEast, outNorth = 26, 45, 9
+    # remove = np.array([7, 8, 10, 25])
+    #
+    # # Offsets:
     offset = np.zeros(n)
-    offset[outNorth] = -5
-    offset[outWest] = 15
-    offset[outEast] = -15
-    offset = np.deg2rad(offset)
-
-    # Speed:
+    # offset[outNorth] = -5
+    # offset[outWest] = 15
+    # offset[outEast] = -15
+    # offset = np.deg2rad(offset)
+    #
+    # # Speed:
     speed_max = vmax / 2
     speed = np.ones(n) * speed_max / 2
-    speed[outWest] = speed_max
-    speed[outEast] = speed_max
-    speed[outNorth] = speed_max * 0.8
-    speed[remove] = 0
-
+    # speed[outWest] = speed_max
+    # speed[outEast] = speed_max
+    # speed[outNorth] = speed_max * 0.8
+    # speed[remove] = 0
+    #
+    #B = Boundary(boundary, offset, speed, None)
     B = Boundary(boundary, offset, speed, None)
-
-    # Weight:
+    #
+    # # Weight:
     weight = np.empty(n)
     weight[:] = np.nan
-    #weight[outWest] = 0.15
-    #weight[outEast] = 0.15
-    #weight[outNorth] = 0.1
-    weight[remove] = 0
-
-    # Distribute remaining weight:
+    # #weight[outWest] = 0.15
+    # #weight[outEast] = 0.15
+    # #weight[outNorth] = 0.1
+    # weight[remove] = 0
+    #
+    # # Distribute remaining weight:
     remaining_weight = 1 - np.nansum(weight)
     rem_ind = np.isnan(weight)
     weight[rem_ind] = (B.length[rem_ind] / sum(B.length[rem_ind])) * remaining_weight

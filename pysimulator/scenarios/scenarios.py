@@ -17,13 +17,13 @@ class ScenarioBase:
         self.initTime = 0.
         self.radarPeriod = 60. / 24.  # 24 RPM radar / 48 RPM radar
         self.radarRange = 5500.0  # meters
-        #self.simulationTimeStep = self.radarPeriod / 4  # sec
+        self.simulationTimeStep = self.radarPeriod / 4  # sec
         self.nScans = 60
         self.simTime = self.radarPeriod * self.nScans  # sec
-        #self.nSimulationSteps = int(self.simTime / self.simulationTimeStep)
+        self.nSimulationSteps = int(self.simTime / self.simulationTimeStep)
         self.P_d_true = 0.8  # Probability of detection
-        #self.sigma_Q = pv_model.sigmaQ_true
-        #self.P_r = 0.9  # Probability of receive (AIS)
+        self.sigma_Q = pv_model.sigmaQ_true
+        self.P_r = 0.9  # Probability of receive (AIS)
         self.model = pv_model
         self.p0 = np.array([100., -100.])  # own position
         # Expected number of measurements from new targets

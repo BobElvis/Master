@@ -5,7 +5,7 @@ from multivariate import multi_gaussian
 class Scan(object):
     __slots__ = 'time', 'radar_img', 'camera_img', 'mx', 'my', 'm', 'n'
 
-    def __init__(self, time, radar_img, camera_img, mx, my):
+    def __init__(self, mx, my, radar_img, camera_img = None, time = None):
         self.time = time
         self.radar_img = radar_img
         self.camera_img = camera_img
@@ -44,13 +44,14 @@ class Cluster:
         self.targets = targets  # Targets defined in the cluster
         self.leaves = sources  # Last nodes in the tree (leaves)
         self.sources = sources  # First nodes in the cluster.
-        self.gated_measurements = gated_measurements if gated_measurements is not None else set()
+        self.gated_measurements = gated_measurements if gated_measurements is not None else []
 
     @classmethod
     def fromMerge(cls, c1, c2):
         # Disjoint set of targets
-        targets = sorted(c1.targets + c2.targets, key=lambda x:x.idx)
-        gated_measurements = c1.gated_measurements.union(c2.gated_measurements)
+        #targets = sorted(c1.targets + c2.targets, key=lambda x: x.idx)
+        targets = c1.targets + c2.targets
+        gated_measurements = c1.gated_measurements + c2.gated_measurements
 
         # Create new hypothesis jointly from both clusters.
         sources = []
@@ -66,17 +67,16 @@ class Cluster:
 
 class TrackNode:
     __slots__ = 'parent', 'measurement', 'gated_measurements', 'childrenDict', 'target',\
-                'hyp_nodes', 'est_prior', 'cov_prior', 'est_posterior', 'cov_posterior',\
-                'z_hat', 'B', 'isPosterior', 'inside_prior', 'PD', 'PX', 'area_scale', 'i_det'
+                'est_prior', 'cov_prior', 'est_posterior', 'cov_posterior',\
+                'z_hat', 'B', 'isPosterior', 'inside_prior', 'PD', 'PX', 'area_scale', 'i_det', 'Binv', 'mg'
 
     def __init__(self, parent, est_posterior, cov_posterior, target, measurement):
         # Node properties
         self.parent = parent
-        self.measurement = measurement # May be none
+        self.measurement = measurement  # May be none
+        self.target = target
         self.gated_measurements = {}
         self.childrenDict = dict()
-        self.target = target
-        self.hyp_nodes = []
 
         # Estimate properties
         self.est_prior = None  # [x, xdot, y, ydot]
@@ -85,6 +85,8 @@ class TrackNode:
         self.cov_posterior = cov_posterior
         self.z_hat = None
         self.B = None
+        self.Binv = None
+        self.mg = None
         self.isPosterior = True
 
         self.PD = 1
@@ -147,16 +149,14 @@ class Target:
         return 'T{}'.format(self.idx)
 
 
-class HypScan:
-    __slots__ = 'probability', 'parent', 'track_nodes', 'track_nodes_del', 'children', 'sol'
+class HypScan(object):
+    __slots__ = 'probability', 'parent', 'track_nodes', 'track_nodes_del'
 
-    def __init__(self, p, parent, track_nodes, track_nodes_del, sol=None):
+    def __init__(self, p, parent, track_nodes, track_nodes_del):
         self.probability = p
         self.parent = parent
         self.track_nodes = track_nodes
         self.track_nodes_del = track_nodes_del
-        self.children = []
-        self.sol = sol
 
 
 class HypScanJoin(HypScan):
@@ -169,6 +169,18 @@ class HypScanJoin(HypScan):
     @classmethod
     def fromNodes(cls, node1, node2):
         prob = node1.probability * node2.probability
-        track_nodes = sorted(node1.track_nodes + node2.track_nodes, key=lambda x: x.target.idx)
-        track_nodes_del = sorted(node1.track_nodes_del + node2.track_nodes_del, key=lambda x: x.target.idx)
+        #track_nodes = sorted(node1.track_nodes + node2.track_nodes, key=lambda x: x.target.idx)
+        #track_nodes_del = sorted(node1.track_nodes_del + node2.track_nodes_del, key=lambda x: x.target.idx)
+        track_nodes = node1.track_nodes + node2.track_nodes
+        track_nodes_del = node1.track_nodes_del + node2.track_nodes_del
         return cls(prob, node1, node2, track_nodes, track_nodes_del)
+
+
+class HypScanJoin2(HypScan):
+    __slots__ = 'parents'
+
+    def __init__(self, prob, parents, track_nodes, track_nodes_del):
+        super().__init__(prob, None, track_nodes, track_nodes_del)
+        self.parents = parents
+
+

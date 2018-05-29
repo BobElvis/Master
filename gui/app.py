@@ -107,8 +107,7 @@ class DynApp(QWidget):
     def change_idx(self, i):
         prev_i = self.i
         self.i = i % len(self.dataloader)
-        data = self.dataloader[self.i]
-        self.main_view.set_scan(data)
+        self.main_view.set_scan(self.dataloader[self.i])
         self.idxEdit.setText(str(i))
         self.on_idx_changed(i, prev_i)
 

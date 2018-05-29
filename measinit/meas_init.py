@@ -9,6 +9,18 @@ from matplotlib.ticker import LinearLocator, FormatStrFormatter
 import matplotlib.pyplot as plt
 
 
+class MeasInitBase:
+    def __init__(self, area, targets_per_scan, vmax):
+        self.target_density = targets_per_scan/area
+        self.variance = (vmax/3)**2
+
+    def init_measurements(self, measurements):
+        for m in measurements:
+            m.init_speed = np.array([0, 0])
+            m.init_speed_var = np.array([self.variance, self.variance])
+            m.density = self.target_density
+
+
 class MeasInit:
     def __init__(self, boundary, dt, P_D, num_detections, targets_per_scan, vmax, init_speed=True):
         # boundary nx2 np array of vertices

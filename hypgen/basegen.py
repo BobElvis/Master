@@ -8,7 +8,3 @@ def normalize(nodes):
         sum += node.probability
     for node in nodes:
         node.probability /= sum
-
-
-def nlargest(hypothesises, K):
-    return heapq.nlargest(K, hypothesises, key=lambda x: x.probability)

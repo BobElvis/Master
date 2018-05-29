@@ -28,11 +28,14 @@ class CameraFig(object):
 
     def set_data(self, scan):
         self.data = scan.camera_img
-        self.ax.imshow(self.data)
+        if self.data is not None:
+            if self.img_artist is None:
+                self.img_artist = self.ax.imshow(self.data)
+            else:
+                self.img_artist.set_data(self.data)
 
     def draw_artists(self):
         if self.img_artist is not None:
-            self.img_artist.set_data(self.data)
             self.ax.draw_artist(self.img_artist)
 
 
@@ -72,7 +75,8 @@ class RadarFig(object):
 
     def draw_artists(self):
         self.ax.draw_artist(self.hbg)
-        self.hRadarData.draw(self.ax._cachedRenderer)
+        if self.hRadarData is not None:
+            self.hRadarData.draw(self.ax._cachedRenderer)
         self.ax.draw_artist(self.hMeas)
 
     def get_aspect(self):
@@ -106,8 +110,9 @@ class TrackFig(RadarFig):
 
             if alive:
                 node = track[-1]
-                print("I: {:.3f}, {:.3f}:{:.3f}:{:.3f}".
-                      format(node.i_det, node.PD, 1-node.PD-node.PX, node.PX))
+                if node.i_det is not None:
+                    print("I: {:.3f}, {:.3f}:{:.3f}:{:.3f}".
+                        format(node.i_det, node.PD, 1-node.PD-node.PX, node.PX))
                 plot_style = '-'
                 gate_x, gate_y = self.track_gate.get_2D_gate(track[-1])
                 z_hat = np.reshape(track[-1].z_hat, (1, 2))
@@ -145,3 +150,4 @@ class TrackFig(RadarFig):
             self.ax.draw_artist(self.h_track[i][2])
             self.ax.draw_artist(self.h_track[i][3])
             self.ax.draw_artist(self.h_track[i][4])
+        self.ax.draw_artist(self.hMeas)

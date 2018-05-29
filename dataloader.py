@@ -34,6 +34,14 @@ class MHTLoader(object):
         self.loaded_idx = max(self.loaded_idx, idx)
         return self.mht_data.getData(self.dataloader[idx])
 
+    def gen_to(self, idx):
+        if self.disabled:
+            return self.mht_data.getData(self.dataloader[idx])
+        for i in range(self.loaded_idx + 1, idx + 1):
+            self.mht.step(self.dataloader[i])
+            yield i, self.mht_data.getData(self.dataloader[i])
+        self.loaded_idx = max(self.loaded_idx, idx)
+
 
 class SimpleDataloader(object):
     # Caches last retrieved item
