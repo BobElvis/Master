@@ -1,9 +1,11 @@
 from mht.mhtprint import *
 from model.model import *
+from hypgen.mhtgen2 import MHTGen2
 from hypgen.genmurty import GenMurty
 import time
 import hypgen.basegen
 import mht.pruning as pruning
+from mht.mhtdata import MhtData
 from mht import clustering
 
 
@@ -13,33 +15,25 @@ class MHT:
         Possible addition. Combination of previous targets (N targets, max combined targets is r). 1 + 1 + N + nCr
     """
 
-    def __init__(self, dt, clutter_density, measurement_model, track_gate, meas_init, mht_data, pruner):
+    def __init__(self, dt, clutter_density, measurement_model, track_gate, meas_init, mht_data: MhtData, pruner):
         self.dt = dt
         self.tIdx = 1
         self.clusters = []
-        self.dead_clusters = []
-        self.scanIdx = -1
 
         self.trackGate = track_gate
         self.measurementModel = measurement_model
-
         self.densityFalseReports = clutter_density
 
         self.pruner = pruner
         self.mht_data = mht_data
         self.meas_init = meas_init
-        #self.mht_gen = MHTGen2(self, P_D, self.probability_deletion)
+        #self.mht_gen = MHTGen2(self, 0.8, 0.15)
         self.mht_gen = GenMurty(self, pruner.K_best)
 
     def cluster_gating(self, measurements):
         return clustering.cluster_gating(self.clusters, measurements, self.trackGate.gamma)
 
     def step(self, scan):
-        self.scanIdx += 1
-        # TODO: Pruning. (maintaining track to hyp relationship)
-        # TODO: Death rate on tracks outside of land.
-        # TODO: Save sequence of measurements corresponding to hypothesises for each cluster.
-        # TODO: (Murty)
         print("{0} STEP {0}".format('-/\--\/-'*5))
 
         # Create measurement vector from scan:
@@ -55,9 +49,11 @@ class MHT:
         print("TIME: {:.2f}".format(time.time()-t1))
 
         for cluster in self.clusters:
+
+            # Prune since merging may have generated too many hypothesises:
             self.pruner.prune(cluster)
 
-            new_targets = self.mht_gen.gen_hyps(cluster)
+            new_targets = self.mht_gen.gen_hyps(scan.time, cluster)
             #print('------- CLUSTER LEAVES:{}'.format(len(cluster.leaves)))
 
             self.pruner.prune(cluster)
@@ -77,14 +73,14 @@ class MHT:
             cluster.targets.extend(new_targets)
             #print("-------- END CLUSTER ---------")
 
-        self.dead_clusters = self.dead_clusters + [c for c in self.clusters if len(c.targets) == 0]
+        new_dead_clusters = [c for c in self.clusters if len(c.targets) == 0]
         self.clusters = [c for c in self.clusters if len(c.targets) > 0]
 
         # Create new clusters from the unassociated measurements:
-        self.clusters += [self.createNewCluster(m) for m in unassociated_measurements]
+        self.clusters += [self.createNewCluster(scan.time, m) for m in unassociated_measurements]
 
         # Debug and saving of data.
-        self.mht_data.setData(scan, self.dead_clusters, self.clusters)
+        self.mht_data.set_data(scan.time, self.clusters, new_dead_clusters)
 
         # Predict all possible target locations. (measurement independent)
         n_target_leaves = 0
@@ -94,30 +90,28 @@ class MHT:
                     n_target_leaves += 1
                     assert t_node.isPosterior, "{} + {}".format(t_node.getTrack(), list(t_node.children()))
                     self.measurementModel.predict(t_node)
-                    t_node.gated_measurements.clear()
-                    t_node.childrenDict.clear()
         print("Number of target leaves: {}".format(n_target_leaves))
 
-    def createNewTarget(self, measurement):
+    def createNewTarget(self, scan_idx, measurement):
         target = Target()
         mean, covariance = self.measurementModel.initialize(measurement)
-        track_node = TrackNode(None, mean, covariance, target, measurement)
+        track_node = TrackNode(scan_idx, None, mean, covariance, target, measurement)
         target.init(track_node)
         return target
 
-    def createNewCluster(self, meas):
-        target = self.createNewTarget(meas)
-        #print("Creating new cluster")
+    def createNewCluster(self, scan_idx, meas):
+        target = self.createNewTarget(scan_idx, meas)
 
-        # Probabilities.
+        # Probabilities:
         falseProbability = self.densityFalseReports
         trueProbability = meas.density
         c = falseProbability + trueProbability  # Normalizing term
 
+        # Create nodes:
         hypFalse = HypScan(falseProbability/c, parent=None, track_nodes=[], track_nodes_del=[])
         hypTarget = HypScan(trueProbability/c, parent=None, track_nodes=[target.source], track_nodes_del=[])
         sources = sorted([hypFalse, hypTarget], key=lambda x: -x.probability)
-        cluster = Cluster(sources=sources, targets=[target])
+        cluster = Cluster(scan_idx, sources=sources, targets=[target])
         return cluster
 
 

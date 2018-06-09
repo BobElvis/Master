@@ -33,6 +33,8 @@ def prune_N_scan(cluster, N_scan):
     if N_scan < 0:
         return cluster.leaves
 
+    raise NotImplementedError("Not working anymore...")
+
     # First check if cluster tree is N deep.
     i = 0
     node = cluster.leaves[0]

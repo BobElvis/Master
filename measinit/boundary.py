@@ -1,16 +1,71 @@
 import cv2
 import numpy as np
 from detection import detection
+import util
 
 
-class Boundary:
-    def __init__(self, B, offsets, speed, weight):
+APPROX_LENGTH_DEFAULT = 0.003
+
+
+class SimpleBoundary:
+    __slots__ = 'n', 'p1', 'p2', 'line_vec', 'len_sq', '__area__', 'temp1', 'temp2'
+
+    def __init__(self, B):
         self.n = B.shape[0]
+        assert B.shape[1] == 2
         self.p1 = B
+        self.p2 = np.roll(B, -1, axis=0)
+        self.line_vec = self.p2 - self.p1
+        self.len_sq = np.sum(np.square(self.line_vec), axis=1)
+        self.__area__ = None
+
+        self.temp1 = np.empty_like(self.p1)
+        self.temp2 = np.empty((self.p1.shape[0],))
+
+    def area(self):
+        if self.__area__ is None:
+            x, y = self.p1[:, 0], self.p1[:, 1]
+            self.__area__ = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+        return self.__area__
+
+    def is_point_inside(self, x, y):
+        c = False
+        j = self.n - 1
+        for i in range(self.n):
+            ix, iy, jx, jy = self.p1[i, 0], self.p1[i, 1], self.p1[j, 0], self.p1[j, 1]
+            c1 = (iy > y) != (jy > y)
+            c2 = x < (jx - ix) * (y - iy) / (jy - iy) + ix
+            if c1 and c2:
+                c = not c
+            j = i
+        return c
+
+    def distance_to_segments(self, point):
+        a1 = np.subtract(point, self.p1, out=self.temp1)
+        a2 = np.multiply(a1, self.line_vec, out=self.temp1)
+        a3 = np.sum(a2, axis=1, out=self.temp2)
+
+        t = np.divide(a3, self.len_sq, out=self.temp2)
+        t_trunc = np.clip(t, 0, 1, out=self.temp2)
+
+        a6 = np.multiply(t_trunc.reshape(-1, 1), self.line_vec, out=self.temp1)
+        diff_vec = np.subtract(point, np.add(self.p1, a6, out=self.temp1), out=self.temp1)
+        return np.linalg.norm(diff_vec, axis=1)
+
+    def __len__(self):
+        return len(self.n)
+
+    def __str__(self):
+        return "Boundary of {} corners/segments. Area={:.2f}".format(self.n, self.area())
+
+
+class Boundary(SimpleBoundary):
+    def __init__(self, B, offsets, speed, weight):
+        super().__init__(B)
         self.offset = offsets
         self.speed = speed
         self.weight = weight
-        self.diff = np.roll(B, -1, axis=0) - B
+        self.diff = self.p2 - self.p1
         self.phi = np.mod(np.arctan2(self.diff[:, 1], self.diff[:, 0]), 2 * np.pi)  # [0, 2*pi>
         self.length = np.sqrt(np.sum(np.square(self.diff), axis=1))
         self.rot_matrix = [np.array(((np.cos(-a), -np.sin(-a)),
@@ -30,22 +85,6 @@ class Boundary:
         concave = diff >= 0
         angles[concave] = angles[concave] + diff[concave] / 2
         return angles
-
-    def is_point_inside(self, x, y):
-        c = False
-        j = self.n - 1
-        for i in range(self.n):
-            ix, iy, jx, jy = self.p1[i, 0], self.p1[i, 1], self.p1[j, 0], self.p1[j, 1]
-            c1 = (iy > y) != (jy > y)
-            c2 = x < (jx - ix) * (y - iy) / (jy - iy) + ix
-            if c1 and c2:
-                c = not c
-            j = i
-        return c
-
-    def area(self):
-        x, y = self.p1[:, 0], self.p1[:, 1]
-        return 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
 
     def printInfo(self):
         print("--Corners:")
@@ -81,11 +120,11 @@ class Boundary:
 
 def setupBoundary(detect_data, vmax):
     # Settings:
-    approx_length = 0.003
+    approx_length = APPROX_LENGTH_DEFAULT
 
     # Create boundary points:
     mask = detect_data.full_mask
-    raw_boundary, contours = createBoundary(mask, approx_length)
+    raw_boundary, contours = create_raw_boundary(mask, approx_length, False)
     b1, b2 = detect_data.scale_measurements(raw_boundary)
     boundary = np.stack((b1, b2), axis=1)
     n = boundary.shape[0]
@@ -128,7 +167,15 @@ def setupBoundary(detect_data, vmax):
     return B
 
 
-def createBoundary(mask, approx_length_factor):
+def create_boundary(detect_data, show=False):
+    # Create boundary points:
+    mask = detect_data.full_mask
+    raw_boundary, img = create_raw_boundary(mask, APPROX_LENGTH_DEFAULT, show)
+    boundary = detect_data.scale_measurements(raw_boundary)
+    return SimpleBoundary(boundary), img
+
+
+def create_raw_boundary(mask, approx_length_factor, show):
     mask = (~mask).astype('uint8')
     im2, contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=lambda x: cv2.arcLength(x, True), reverse=True)
@@ -136,7 +183,9 @@ def createBoundary(mask, approx_length_factor):
     epsilon = approx_length_factor * cv2.arcLength(cnt, True)
     approx = cv2.approxPolyDP(cnt, epsilon, True)
     approx = np.reshape(approx, (len(approx), 2))
-    return approx, contours
+    img = np.zeros((mask.shape[0], mask.shape[1], 4), dtype='uint8')
+    cv2.drawContours(img, [approx], 0, (255, 0, 0, 255))
+    return approx, img
 
 
 def drawBoundary(mask, contours, approx_contour):
@@ -147,9 +196,9 @@ def drawBoundary(mask, contours, approx_contour):
     # Drawing img:
     mask_draw = np.zeros((mask.shape[1], mask.shape[0], 3), 'uint8')
     print("Contour approximated from {} to {}".format(len(cnt), len(approx_contour)))
-    cv2.drawContours(mask_draw, contours, -1, (0, 255, 0), 1)
+    cv2.drawContours(mask_draw, [cnt], -1, (0, 255, 0), 1)
     cv2.drawContours(mask_draw, [approx_contour], 0, (0, 0, 255), 1)
-    cv2.imshow('image', mask_draw[400:1000, 100:900, :])
+    cv2.imshow('image', mask_draw[400:, :, :])
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

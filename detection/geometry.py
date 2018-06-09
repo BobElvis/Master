@@ -1,4 +1,6 @@
 import math
+
+import cv2
 import numpy as np
 from numpy.linalg import norm
 
@@ -20,3 +22,10 @@ def distance_to_line(p1, p2, s):
     num = abs(y_diff * s[0] - x_diff * s[1] + p2[0] * p1[1] - p2[1] * p1[0])
     den = math.sqrt(y_diff ** 2 + x_diff ** 2)
     return num / den
+
+
+def contour_centroid(cnt):
+    M = cv2.moments(cnt)
+    cx = int(M['m10'] / M['m00'])
+    cy = int(M['m01'] / M['m00'])
+    return cx, cy

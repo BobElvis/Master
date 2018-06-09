@@ -216,7 +216,7 @@ def runSimulation(**kwargs):
                   scenario.p0[0] + scenario.radarRange * 1.05))
         plt.ylim((scenario.p0[1] - scenario.radarRange * 1.05,
                   scenario.p0[1] + scenario.radarRange * 1.05))
-        fig1.canvas.draw()
+        fig1.canvas.update_view()
         plt.show()
 
 

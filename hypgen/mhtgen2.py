@@ -3,7 +3,7 @@ import collections
 from model.model import HypScan
 
 
-class MHTGen2():
+class MHTGen2:
     def __init__(self, mht, prob_detect, prob_delete=0):
         self.mht = mht
         self.prob_detect = prob_detect
@@ -20,14 +20,16 @@ class MHTGen2():
         self.sel = None
         self.av = None
         self.deleted = None
+        self.scan_time = None
 
         self.prob_occlusion = 1 - self.prob_detect - self.prob_delete
 
         print('GEN: P_D: {}, P_X: {}, P_O: {}'.format(self.prob_detect, self.prob_delete, self.prob_occlusion))
 
-    def gen_hyps(self, cluster):
+    def gen_hyps(self, scan_time, cluster):
+        self.scan_time = scan_time
         self.meas = sorted(cluster.gated_measurements, key=lambda x: x.idx)
-        self.new_targets = [self.mht.createNewTarget(m) for m in self.meas]
+        self.new_targets = [self.mht.createNewTarget(self.scan_time, m) for m in self.meas]
         self.n_meas = len(self.meas)
         self.new_leaves = []
 
@@ -80,7 +82,6 @@ class MHTGen2():
         if i == self.n_del:
             new_node = HypScan(prob, self.current_parent,
                                self.sel.copy(), self.deleted + self.current_parent.track_nodes_del)
-            self.current_parent.children.append(new_node)
             self.new_leaves.append(new_node)
             return
 

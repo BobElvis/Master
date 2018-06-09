@@ -32,17 +32,17 @@ class GenMurty():
         self.time_draw = 0
         self.time_hyp = 0
 
-    def gen_hyps(self, cluster):
+    def gen_hyps(self, scan_idx, cluster):
         meas = sorted(cluster.gated_measurements, key=lambda x:x.idx)
-        self.new_targets = [self.mht.createNewTarget(m) for m in meas]
+        self.new_targets = [self.mht.createNewTarget(scan_idx, m) for m in meas]
         self.new_leaves = []
         self.time_draw, self.time_hyp = 0, 0
-        self.low_K, self.num_hyp, self.useless = 1e15, 0, 0
+        self.low_K, self.best_K, self.useless = 1e15, 0, 0
         for scan_node in cluster.leaves:
             self.gen_hyps_single_del(scan_node, meas)
 
         cluster.leaves = self.new_leaves
-        #print("TOT: Time hyp {:.3f}, {:.3f}".format(self.time_draw, self.time_hyp))
+        print("TOT: Time hyp {:.3f}, {:.3f}".format(self.time_draw, self.time_hyp))
         return self.new_targets
 
     # def gen_hyps_single(self, scan_node: HypScan, measurements):
@@ -133,19 +133,14 @@ class GenMurty():
             time_temp = time.time()
 
             # Hypothesis generated from LOW (or in reality zero probability).
-            p = math.exp(-score)*prior
-            if p < LOW/2:
-                break
+            s = math.exp(-score)
+            p = s*prior
 
             # Check if probability is worse than best than the K-hyp.
-            self.num_hyp += 1
-            if self.num_hyp > self.K:
-                if p < self.low_K:
-                    break
-                else:
-                    self.low_K = p
-            else:
-                self.low_K = min(p, self.low_K)
+            if p < LOW or (len(self.new_leaves) >= self.K and self.low_K > p):
+                break
+
+            self.low_K = min(p, self.low_K)
 
             # Create hypothesis:
             new_track_nodes = []
@@ -170,6 +165,7 @@ class GenMurty():
             # Loop over tracks:
             for i, track_node in enumerate(scan_node.track_nodes):
                 if delete_nodes[i]:
+
                     new_delete_nodes.append(track_node)
                 elif meas_found[i]:
                     new_track_nodes.append(track_node.innovateTrack(meas_nodes[i], self.mht.measurementModel))

@@ -15,7 +15,6 @@ class DataSource:
 
 
 class MHTLoader(object):
-    # n_safe: if no measurements seen in n frames, mht can jump (-1 == no jump)
     def __init__(self, mht, dataloader, i_start = 0, disabled=False):
         self.mht = mht
         self.mht_data = mht.mht_data
@@ -28,18 +27,19 @@ class MHTLoader(object):
 
     def __getitem__(self, idx):
         if self.disabled:
-            return self.mht_data.getData(self.dataloader[idx])
+            return None
         for i in range(self.loaded_idx + 1, idx + 1):
             self.mht.step(self.dataloader[i])
         self.loaded_idx = max(self.loaded_idx, idx)
-        return self.mht_data.getData(self.dataloader[idx])
+        return self.mht_data.get_data(idx)
 
     def gen_to(self, idx):
         if self.disabled:
-            return self.mht_data.getData(self.dataloader[idx])
+            return self.mht_data.get_data(idx)
         for i in range(self.loaded_idx + 1, idx + 1):
             self.mht.step(self.dataloader[i])
-            yield i, self.mht_data.getData(self.dataloader[i])
+            self.loaded_idx = i
+            yield i, self.mht_data.get_data(i)
         self.loaded_idx = max(self.loaded_idx, idx)
 
 

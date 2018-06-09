@@ -2,6 +2,8 @@ import numpy as np
 import math
 import time
 from scipy.stats import norm
+import detection.geometry
+from measinit.boundary import Boundary
 
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
@@ -21,30 +23,70 @@ class MeasInitBase:
             m.density = self.target_density
 
 
-class MeasInit:
-    def __init__(self, boundary, dt, P_D, num_detections, targets_per_scan, vmax, init_speed=True):
+class MeasInitProb(MeasInitBase):
+    def __init__(self, boundary: Boundary, dt, PD, num_detections, targets_per_scan, v_max):
+        super().__init__(1, 0, v_max)
+        self.B = boundary
+
+        self.v_max = v_max
+        detections = np.arange(0, num_detections)  # 0, 1, num_det-1;
+        self.det_divisor = ((detections + 1)*dt).astype(float)
+        self.det_factor = (np.power(1 - PD, detections) * PD).astype(float)
+        self.probabilities = np.zeros(self.B.n, dtype=float)
+
+        # This constant can be found by using self.calcIntegral(dxy)
+        c_pre = 7.817e-05  # dxy=1.00, v_max=5, P_D=0.8, dt=0.125
+        #self.c = targets_per_scan * c_pre
+
+        self.c = targets_per_scan/boundary.area()
+
+    def init_measurements(self, measurements):
+        super().init_measurements(measurements)
+        for m in measurements:
+            m.density = self.c * self.calc_prob_measurement(m.value)
+
+    def calc_prob_measurement(self, value):
+        #self.probabilities[:] = 0
+        min_dist = np.min(self.B.distance_to_segments(value))
+        max_prob = self.calc_prob_aux(min_dist, self.v_max, self.v_max / 3)
+        return max_prob
+
+    def calc_prob_aux(self, d, speed, sigma):
+        x = (1-norm.cdf(d/self.det_divisor, loc=speed, scale=sigma))*self.det_factor
+        return np.sum(x)
+
+    def calcIntegral(self, dxy, show=False):
+        B = self.B.p1
+        x = np.arange(np.min(B[:, 0]), np.max(B[:, 0])+dxy, dxy)
+        y = np.arange(np.min(B[:, 1]), np.max(B[:, 1])+dxy, dxy)
+        values = np.zeros((len(x), len(y)))
+        nx = len(x)
+        for idx, i in enumerate(range(nx)):
+            if idx % (nx / 50) < 1:
+                print("x: {}/{}".format(idx, nx))
+            for j in range(len(y)):
+                if not self.B.is_point_inside(x[i], y[j]):
+                    continue
+                values[i, j] = self.calc_prob_measurement(np.array([x[i], y[j]]))
+        if show:
+            import util
+            util.show_heatmap(values)
+        return 1/(np.nansum(values)*dxy*dxy)
+
+
+class MeasInit(MeasInitProb):
+    def __init__(self, boundary, dt, PD, num_detections, targets_per_scan, vmax, v_max, init_speed=True):
         # boundary nx2 np array of vertices
         # offsets nx1 np array of offsets
         # speed nx1 np array of speed out of each wall.
         # weight nx1 np array of probability that a target appears from each wall
 
-        self.B = boundary
-        self.detections = np.arange(0, num_detections) #0, 1, num_det-1;
-        self.dt = dt
-        self.PD = P_D
+        super().__init__(boundary, dt, PD, num_detections, targets_per_scan, v_max)
         self.vmax = vmax
         self.init_speed = init_speed
 
-        # Calculating some intermediate arrays:
-        self.det_divisor = (self.detections + 1)*dt
-        self.det_factor = np.power(1-P_D, self.detections)
-
         self.velocities = np.zeros((2, self.B.n))
         self.probabilities = np.zeros(self.B.n)
-
-        # This constant can be found by using self.calcIntegral(dxy)
-        c_pre = 8.522e-05  # dxy=1.00
-        self.c = targets_per_scan * c_pre
 
     def init_measurements(self, measurements):
         import time
@@ -100,7 +142,7 @@ class MeasInit:
         else:
             dx = 0
         d = math.sqrt(dx**2 + y**2)*math.cos(offset)
-        p = self.calcProb(d, v, v/3)*a_factor
+        p = self.calc_prob_aux(d, v, v/3)*a_factor
 
         # Transform back to coordinate system:
         beta = math.atan2(y, dx)
@@ -108,10 +150,6 @@ class MeasInit:
         vx = v*math.cos(angle)
         vy = v*math.sin(angle)
         return np.array([vx, vy]), p
-
-    def calcProb(self, d, speed, sigma):
-        x = (1-norm.cdf(d/self.det_divisor, loc=speed, scale=sigma))*self.det_factor
-        return np.sum(x)*self.PD
 
     @staticmethod
     def smooth_angle(phi, a_start, a_stop):
@@ -121,19 +159,3 @@ class MeasInit:
             return 1
         else:
             return 1 - (phi - a_start)/(a_stop - a_start)
-
-    def calcIntegral(self, dxy, show=False):
-        B = self.B.p1
-        x = np.arange(np.min(B[:, 0]), np.max(B[:, 0])+dxy, dxy)
-        y = np.arange(np.min(B[:, 1]), np.max(B[:, 1])+dxy, dxy)
-        values = np.zeros((len(x), len(y)))
-        for i in range(len(x)):
-            for j in range(len(y)):
-                if not self.B.is_point_inside(x[i], y[j]):
-                    continue
-                self.init_single_meas(np.array((x[i], y[j])))
-                values[i, j] = np.max(self.probabilities)
-        if show:
-            plt.imshow(values, cmap='hot', interpolation='nearest')
-            plt.show()
-        return 1/(np.nansum(values)*dxy*dxy)

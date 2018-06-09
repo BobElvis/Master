@@ -44,7 +44,7 @@ def innovate_track_nodes(track_nodes, measurement_model):
 
 
 class MeasurementModel:
-    def __init__(self, q_std_cont, r_std_discrete, dt, P_D, P_X):
+    def __init__(self, q_std_cont, r_std_discrete, dt, P_D, P_X, delete_only_meas=False):
         # State matrices:
         self.F = np.identity(4)
         self.F[0, 1] = dt
@@ -59,6 +59,9 @@ class MeasurementModel:
         # Other
         self.dt = dt
         self.Q_correction = self.Q[0, 0]/(self.dt**2)
+
+        # Detection/Deletion
+        self.del_only_meas = delete_only_meas
         self.P_D = P_D
         self.P_X = P_X
 
@@ -77,8 +80,12 @@ class MeasurementModel:
         track_node.Binv = np.linalg.inv(track_node.B)
         track_node.mg = MULTI_C_2/math.sqrt(track_node.B[0, 0]*track_node.B[1, 1])
         track_node.isPosterior = False
-        track_node.PD = self.P_D
-        track_node.PX = self.P_X
+        if self.del_only_meas and track_node.measurement is None:
+            track_node.PD = self.P_D
+            track_node.PX = 0
+        else:
+            track_node.PD = self.P_D
+            track_node.PX = self.P_X
 
     def update(self, track_node, z):
         kalman_gain = track_node.cov_prior.dot(self.H.T).dot(np.linalg.inv(track_node.B))

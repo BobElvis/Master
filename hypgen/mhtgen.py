@@ -31,7 +31,7 @@ class MHTGen:
         track_nodes = self.innovate_track_nodes(leaf_node.track_nodes, self.mht.measurementModel)
         return HypScan(prob, scan_parent, track_nodes, scan_parent.track_nodes_del.copy())
 
-    def gen_hyps(self, cluster):
+    def gen_hyps(self, scan_time, cluster):
         # Using measurements, create new hyp scans.
 
         new_targets = []  # All new targets created by the measurements.
@@ -62,7 +62,6 @@ class MHTGen:
         for node in cluster.leaves:
             node.parent.children.append(node)
 
-        self.normalize(cluster.leaves)
         return new_targets
 
     @staticmethod

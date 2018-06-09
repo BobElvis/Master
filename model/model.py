@@ -1,18 +1,17 @@
 import numpy as np
 from multivariate import multi_gaussian
+from typing import Iterable, List
 
 
 class Scan(object):
     __slots__ = 'time', 'radar_img', 'camera_img', 'mx', 'my', 'm', 'n'
 
-    def __init__(self, mx, my, radar_img, camera_img = None, time = None):
+    def __init__(self, m, radar_img, camera_img = None, time = None):
         self.time = time
         self.radar_img = radar_img
         self.camera_img = camera_img
-        self.mx = mx
-        self.my = my
-        self.m = np.stack((self.mx, self.my), axis=1)
-        self.n = len(mx)
+        self.m = m
+        self.n = m.shape[0]
 
     def __len__(self):
         return len(self.mx)
@@ -37,52 +36,29 @@ class Measurement:
         return self.value[key]
 
 
-class Cluster:
-    __slots__ = 'targets', 'leaves', 'sources', 'gated_measurements'
-
-    def __init__(self, sources, targets, gated_measurements=None):
-        self.targets = targets  # Targets defined in the cluster
-        self.leaves = sources  # Last nodes in the tree (leaves)
-        self.sources = sources  # First nodes in the cluster.
-        self.gated_measurements = gated_measurements if gated_measurements is not None else []
-
-    @classmethod
-    def fromMerge(cls, c1, c2):
-        # Disjoint set of targets
-        #targets = sorted(c1.targets + c2.targets, key=lambda x: x.idx)
-        targets = c1.targets + c2.targets
-        gated_measurements = c1.gated_measurements + c2.gated_measurements
-
-        # Create new hypothesis jointly from both clusters.
-        sources = []
-        for h1 in c1.leaves:
-            for h2 in c2.leaves:
-                node = HypScanJoin.fromNodes(h1, h2)
-                sources.append(node)
-        return Cluster(sources, targets, gated_measurements)
-
-    def __repr__(self):
-        return 'C: {}, {}'.format(self.targets, self.gated_measurements)
-
-
 class TrackNode:
-    __slots__ = 'parent', 'measurement', 'gated_measurements', 'childrenDict', 'target',\
+    __slots__ = 'scan_idx', 'parent', 'measurement', 'gated_measurements', 'childrenDict', 'target',\
                 'est_prior', 'cov_prior', 'est_posterior', 'cov_posterior',\
                 'z_hat', 'B', 'isPosterior', 'inside_prior', 'PD', 'PX', 'area_scale', 'i_det', 'Binv', 'mg'
 
-    def __init__(self, parent, est_posterior, cov_posterior, target, measurement):
+    def __init__(self, scan_idx, parent, est_posterior, cov_posterior, target, measurement):
         # Node properties
+        self.gated_measurements = {}
+        self.childrenDict = dict()
+
+        # Used for extraction:
+        self.scan_idx = scan_idx
         self.parent = parent
         self.measurement = measurement  # May be none
         self.target = target
-        self.gated_measurements = {}
-        self.childrenDict = dict()
 
         # Estimate properties
         self.est_prior = None  # [x, xdot, y, ydot]
         self.cov_prior = None
         self.est_posterior = est_posterior
         self.cov_posterior = cov_posterior
+
+        # Used for fast access:
         self.z_hat = None
         self.B = None
         self.Binv = None
@@ -111,7 +87,7 @@ class TrackNode:
                 est_posterior, cov_posterior = self.est_prior, self.cov_prior
             else:
                 est_posterior, cov_posterior = innovator.update(self, measurement.value)
-            child_node = TrackNode(self, est_posterior, cov_posterior, self.target, measurement)
+            child_node = TrackNode(self.scan_idx + 1, self, est_posterior, cov_posterior, self.target, measurement)
             self.childrenDict[measurement] = child_node
         return child_node
 
@@ -119,16 +95,22 @@ class TrackNode:
         return self.childrenDict.values()
 
     def __repr__(self):
-        return '{}-{}'.format(self.target, self.measurement)
+        return '{}-{}-{}'.format(self.scan_idx, self.target, self.measurement)
 
-    def getTrack(self):
-        # Return the list of track nodes up to this one.
-        return self.getTrackAux([])
+    def getTrack(self, i_start=None, i_end=None):
+        # Return the list of track nodes from i_start up to and including i_end
+        if i_end is None:
+            i_end = self.scan_idx
+        if i_start is None or self.scan_idx >= i_start:
+            return self.getTrackAux([], i_start, i_end)
+        else:
+            return []
 
-    def getTrackAux(self, list):
-        if self.parent is not None:
-            self.parent.getTrackAux(list)
-        list.append(self)
+    def getTrackAux(self, list, i_start, i_end):
+        if (self.parent is not None) and (i_start is None or i_start <= self.scan_idx - 1):
+            self.parent.getTrackAux(list, i_start, i_end)
+        if i_end >= self.scan_idx:
+            list.append(self)
         return list
 
 
@@ -152,7 +134,7 @@ class Target:
 class HypScan(object):
     __slots__ = 'probability', 'parent', 'track_nodes', 'track_nodes_del'
 
-    def __init__(self, p, parent, track_nodes, track_nodes_del):
+    def __init__(self, p: float, parent, track_nodes: List[TrackNode], track_nodes_del: List[TrackNode]):
         self.probability = p
         self.parent = parent
         self.track_nodes = track_nodes
@@ -166,15 +148,6 @@ class HypScanJoin(HypScan):
         super().__init__(p, parent1, track_nodes, track_nodes_del)
         self.parent2 = parent2
 
-    @classmethod
-    def fromNodes(cls, node1, node2):
-        prob = node1.probability * node2.probability
-        #track_nodes = sorted(node1.track_nodes + node2.track_nodes, key=lambda x: x.target.idx)
-        #track_nodes_del = sorted(node1.track_nodes_del + node2.track_nodes_del, key=lambda x: x.target.idx)
-        track_nodes = node1.track_nodes + node2.track_nodes
-        track_nodes_del = node1.track_nodes_del + node2.track_nodes_del
-        return cls(prob, node1, node2, track_nodes, track_nodes_del)
-
 
 class HypScanJoin2(HypScan):
     __slots__ = 'parents'
@@ -182,5 +155,21 @@ class HypScanJoin2(HypScan):
     def __init__(self, prob, parents, track_nodes, track_nodes_del):
         super().__init__(prob, None, track_nodes, track_nodes_del)
         self.parents = parents
+
+
+class Cluster:
+    __slots__ = 'first_idx', 'last_idx', 'targets', 'leaves', 'sources', 'gated_measurements'
+
+    def __init__(self, first_idx: int, sources: List[HypScan], targets: List[Target],
+                 gated_measurements: List[Measurement] = None):
+        self.first_idx = first_idx
+        self.last_idx = None
+        self.targets = targets  # Targets defined in the cluster
+        self.leaves = sources  # Last nodes in the tree (leaves)
+        self.sources = sources  # First nodes in the cluster.
+        self.gated_measurements = gated_measurements if gated_measurements is not None else []
+
+    def __repr__(self):
+        return 'C: {}, {}'.format(self.targets, self.gated_measurements)
 
 

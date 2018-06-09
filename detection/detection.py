@@ -1,5 +1,5 @@
-import cv2
 import util
+from detection.geometry import contour_centroid
 from model.model import *
 from detection.split import *
 import detection.geometry as geometry
@@ -7,6 +7,7 @@ import dataloader
 import os
 from detection.dataset import Dataset, find_files
 from detection.dataconfigs import DataConfig
+from detection.ghosts import mark_multiple
 
 
 AVG_FOLDER = 'land'
@@ -17,8 +18,8 @@ SAT_RANGE = 190
 
 def save_avg_mask(mask, dataset: Dataset, p, i_start, i_end):
     d = dataset
-    filename = "AVG(rot{},r{})({},{})({},{})". \
-        format(d.config.rotation,d.config.radar_range, p, d.config.day, d.config.partition, i_start, i_end)
+    filename = "AVG(rot{},r{})({},{})(p{})({},{})". \
+        format(d.config.rotation, d.config.radar_range, d.date, d.partition, p, i_start, i_end)
     path = os.path.join(AVG_FOLDER, filename)
     util.saveImg(mask, path, 'png')
 
@@ -27,21 +28,20 @@ def get_avg_mask(data_config: DataConfig):
     files = find_files(AVG_FOLDER, 'png')
     criteria = "AVG(rot{},r{}".format(data_config.rotation, data_config.radar_range)
     masks = [f for f in files if f.startswith(criteria)]
-    if len(masks) == 1:
+    if len(masks) == 0:
+        raise FileNotFoundError("No masks found for config: {}".format(data_config))
+    elif len(masks) == 1:
         return util.readMask(os.path.join(AVG_FOLDER, masks[0] + ".png"))
     else:
-        print("Error locating mask. Number of masks found for config: {}".format(data_config))
+        print("WARNING. Multiple average masks found for config: {}".format(data_config))
+        return masks[0]
 
 
 def get_land_mask(data_config: DataConfig):
-    return util.get_mask(data_config.radar_range, RAW_SIZE, SAT_PATH, SAT_RANGE)
-
-
-def contourCentroid(cnt):
-    M = cv2.moments(cnt)
-    cx = int(M['m10'] / M['m00'])
-    cy = int(M['m01'] / M['m00'])
-    return cx, cy
+    land_mask = util.get_mask(data_config.radar_range, RAW_SIZE, SAT_PATH, SAT_RANGE)
+    range_mask = util.create_range_mask(data_config.radar_range, SAT_RANGE, RAW_SIZE)
+    land_mask[range_mask] = True
+    return land_mask
 
 
 class DetectData:
@@ -50,18 +50,24 @@ class DetectData:
         self.sat_mask = get_land_mask(data_config)
         self.avg_mask = get_avg_mask(data_config)
         self.full_mask = np.logical_or(self.sat_mask, self.avg_mask)
+        self.data_config = data_config
 
-    def scale_measurements(self, measurements):
+    def scale_measurements(self, measurements, reverse=False):
         # ------ Scaling measurements.
-        mx = (measurements[:, 0] - RAW_SIZE / 2) * self.measScale
-        my = -(measurements[:, 1] - RAW_SIZE / 2) * self.measScale
-        return mx, my
+        if reverse:
+            mx = measurements[:, 0] / self.measScale + RAW_SIZE / 2
+            my = -measurements[:, 1] / self.measScale + RAW_SIZE / 2
+        else:
+            mx = (measurements[:, 0] - RAW_SIZE / 2) * self.measScale
+            my = -(measurements[:, 1] - RAW_SIZE / 2) * self.measScale
+        return np.stack((mx, my), axis=1)
 
 
 class DetectionBase(dataloader.DataSource):
-    def __init__(self, dataset, rotation):
+    def __init__(self, dataset: Dataset):
         self.dataset = dataset
-        rotMatrix = cv2.getRotationMatrix2D((RAW_SIZE / 2 - 0.5, RAW_SIZE / 2 - 0.5), rotation, 1)
+        c = dataset.config
+        rotMatrix = cv2.getRotationMatrix2D((c.radar_img_size / 2 - 0.5, c.radar_img_size / 2 - 0.5), c.rotation, 1)
         self.rotMatrixInverse = cv2.invertAffineTransform(rotMatrix)
 
     def load_radar(self, idx):
@@ -79,7 +85,10 @@ class DetectionBase(dataloader.DataSource):
         radar_img, camera_img = self.load_raw_data(idx)
         scan = self.detect_radar(radar_img)
         scan.time = idx
-        scan.camera_img = self.detect_camera(camera_img)
+        if camera_img is None:
+            scan.camera_img = None
+        else:
+            scan.camera_img = self.detect_camera(camera_img)
         return scan
 
     def detect_radar(self, radar_img) -> Scan:
@@ -98,7 +107,7 @@ class DetectionBase(dataloader.DataSource):
 
 class Detection(DetectionBase):
     def __init__(self, dataset, detect_data, meas_init, resize=None):
-        super().__init__(dataset, detect_data.rotation)
+        super().__init__(dataset)
 
         self.dd = detect_data
         self.resize = 1 if resize is None else resize
@@ -118,28 +127,37 @@ class Detection(DetectionBase):
         # radar_img: 1-channel img.
         # Outputs scan. Measurements are sorted in y-coordinate (from largest to smallest)
 
-        #radar_img[self.dd.full_mask] = 0
+        radar_img[self.dd.full_mask] = 0
+
+        # Finding contours. Orientation is always counter-clockwise.
+        _, cnts, _ = cv2.findContours(radar_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
         # ----- Draw raw output:
         drawImg = np.zeros((radar_img.shape[0], radar_img.shape[1], 4), dtype='uint8')
-        _, cnts, _ = cv2.findContours(radar_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         cv2.drawContours(drawImg, cnts, -1, (255, 255, 255, 100), cv2.FILLED)
 
         # ----- Find contours, filter on size:
         cnts = [c for c in cnts if cv2.contourArea(c) > self.areaMinCnt]
+        print([c.shape for c in cnts])
+
         measurements = self.detectCnt(cnts, drawImg)
         measurements = np.array(measurements)
         if len(measurements) == 0:
             measurements = np.empty((0, 2))
 
         # ------ Scaling measurements:
-        mx, my = self.dd.scale_measurements(measurements)
-        return Scan(mx, my, drawImg)
+        m = self.dd.scale_measurements(measurements)
+
+        cnts_scaled = [self.dd.scale_measurements(cnt.reshape(-1, 2)) for cnt in cnts]
+        shadowed = mark_multiple(self.dd, m, cnts_scaled, drawImg)
+        if shadowed is not None:
+            m = np.delete(m, shadowed, axis=0)
+        return Scan(m, drawImg)
 
     def detect_camera(self, camera_img):
         camera_img = camera_img[400:-150, :, :]  # Crop top/bottom off the camera.
         camera_img = cv2.resize(camera_img, dsize=(0, 0), fx=self.resize, fy=self.resize)  # Resize
-        camera_img = self.improve_camera(camera_img)
+        #camera_img = self.improve_camera(camera_img)
         return camera_img
 
     @staticmethod
@@ -183,7 +201,7 @@ class Detection(DetectionBase):
 
             res = self.get_best_defect_simple(cnt)
             if res[0] is False or not self.enable_splitting:
-                measurements.append(contourCentroid(cnt))
+                measurements.append(contour_centroid(cnt))
                 continue
 
             def1, def2 = res[1], res[2]
@@ -226,28 +244,5 @@ class Detection(DetectionBase):
                 measurements.append(e_m1)
                 measurements.append(e_m2)
             else:
-                measurements.append(contourCentroid(cnt))
+                measurements.append(contour_centroid(cnt))
         return measurements
-
-    def improve_camera(self, img):
-        # Gamma correction:
-        gamma = 2
-        img = np.power(img/255, 1/gamma)*255
-        img = img.astype('uint8')
-
-        # -----Converting image to LAB Color model-----------------------------------
-        lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-
-        # -----Splitting the LAB image to different channels-------------------------
-        lum, a, b = cv2.split(lab)
-
-        # -----Applying CLAHE to L-channel-------------------------------------------
-        clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(8, 8))
-        cl = clahe.apply(lum)
-
-        # -----Merge the CLAHE enhanced L-channel with the a and b channel-----------
-        limg = cv2.merge((cl, a, b))
-
-        # -----Converting image from LAB Color model to RGB model--------------------
-        final = cv2.cvtColor(limg, cv2.COLOR_LAB2RGB)
-        return final

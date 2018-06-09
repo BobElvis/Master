@@ -93,6 +93,8 @@ def split_folder(dir, dt):
 
 class Dataset(object):
     def __init__(self, root: str, date: str, partition: int):
+        self.date = date
+        self.partition = partition
         self.dir = os.path.join(root, date, str(partition))
         self.files = find_files(self.dir)
         self.config = detection.dataconfigs.get_data_config(date, partition)

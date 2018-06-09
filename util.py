@@ -6,7 +6,11 @@ import sys
 
 def readImg(path):
     # Returns matrix of (width x height x 3)
-    return cv2.cvtColor(cv2.imread(path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    else:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
 def readImgGray(path):
@@ -15,7 +19,7 @@ def readImgGray(path):
 
 def saveImg(img, path, img_type):
     if img.dtype == bool:
-        img = img.astype('uint8')
+        img = img.astype('uint8')*128
     cv2.imwrite(path + "." + img_type, img)
 
 
@@ -65,16 +69,22 @@ def crop_img(img, idxs):
 
 def get_mask(out_range, resolution, path, in_range):
     mask = readImgGray(path)
+    assert mask.shape[0] == mask.shape[1]
     s = out_range / in_range
     c = round(mask.shape[0] / 2)
+
     r = round(c * s)
-    maskCrop = mask[c - r:c + r, c - r:c + r]
+    if s < 1:
+        maskCrop = mask[c - r:c + r, c - r:c + r]
+    else:
+        p = r - c
+        maskCrop = np.pad(mask, ((p, p), (p, p)), mode='constant', constant_values=np.amax(mask))
     return cv2.resize(maskCrop, (resolution, resolution), interpolation=cv2.INTER_NEAREST) > 0
 
 
-def create_range_mask(range, fill_range, resolution):
-    x = np.linspace(-range, range, resolution, endpoint=True)
-    y = np.linspace(-range, range, resolution, endpoint=True)
+def create_range_mask(fill_range, out_range, resolution):
+    x = np.linspace(-out_range, out_range, resolution, endpoint=True)
+    y = np.linspace(-out_range, out_range, resolution, endpoint=True)
     X, Y = np.meshgrid(x, y)
     d = np.sqrt(np.square(X) + np.square(Y))
     return d > fill_range

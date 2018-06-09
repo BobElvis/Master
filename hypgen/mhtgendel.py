@@ -1,5 +1,5 @@
 from hypgen.mhtgen import MHTGen
-from model.model2 import *
+from model.model import *
 
 
 class MHTGenDel(MHTGen):

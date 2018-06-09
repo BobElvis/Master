@@ -2,7 +2,9 @@ import time
 import numpy as np
 import math
 from model.model import *
+import sys
 
+INT_MAX = 10000000
 P_CONSTANT = math.exp(-0.5)
 
 
@@ -30,36 +32,42 @@ class ClusterMerger:
         self.leaves = []
 
     def merge_clusters(self, clusters):
-        c_iter = iter(clusters)
-        c = c_iter.__next__()
+        c = clusters[0]
 
         # Hypothesises:
         self.leaves = []
         self.clusters = clusters
         self.n = len(clusters)
         for hyp in c.leaves:
+            assert len(self.t_nodes) == 0 and len(self.t_nodes_del) == 0
             self.__aux__(hyp, 1, 1.0)
 
         # Clusters:
+        first_idx = c.first_idx
         targets = c.targets.copy()
         g_meas = c.gated_measurements.copy()
-        for c in c_iter:
+        n_hyps = len(c.leaves)
+        for i in range(1, len(clusters)):
+            c = clusters[i]
+            first_idx = min(first_idx, c.first_idx)
             targets.extend(c.targets)
             g_meas.extend(c.gated_measurements)
-
-        return Cluster(self.leaves, targets, g_meas)
+            n_hyps = n_hyps * len(c.leaves)
+        assert len(self.leaves) == n_hyps
+        return Cluster(first_idx, self.leaves, targets, g_meas)
 
     def __aux__(self, hyp, i, p):
         self.t_nodes.append(hyp.track_nodes)
         self.t_nodes_del.append(hyp.track_nodes_del)
         self.parents.append(hyp.parent)
 
-        p *= hyp.probability
+        p = p * hyp.probability
         if i == self.n:
             t_nodes, t_nodes_del = [], []
-            for t_nodes_list, t_nodes_del_list in zip(self.t_nodes, self.t_nodes_del):
+            for t_nodes_list in self.t_nodes:
                 t_nodes.extend(t_nodes_list)
-                t_nodes_del.extend(t_nodes_del_list)
+            for t_nodes_list in self.t_nodes_del:
+                t_nodes_del.extend(t_nodes_list)
             self.leaves.append(HypScanJoin2(p, self.parents.copy(), t_nodes, t_nodes_del))
         else:
             for hyp2 in self.clusters[i].leaves:
@@ -99,7 +107,6 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
             cluster_associated_w_meas = False
             for target in cluster.targets:
                 for t_node in target.leaves:
-                    t = time.time()
                     assert not t_node.isPosterior, '{}'.format(t_node)
 
                     # Calculate gate value:
@@ -114,7 +121,6 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
                             cluster_associated_w_meas = True
                         p = (P_CONSTANT ** gate_value) * t_node.mg * t_node.area_scale
                         t_node.gated_measurements[meas] = p
-                    t_gate += time.time() - t
 
         # Number of clusters associated for measurement:
         # - 0. Mark measurement to create new cluster.
@@ -126,24 +132,11 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
         elif len(associated_clusters) == 1:
             associated_clusters[0].gated_measurements.append(meas)
         else:
-            t = time.time()
-            n_merges += len(associated_clusters) - 1
-            n_merges_single += 1
-
             # Merge clusters and replace them with the new one:
-            #new_cluster = mergeClusters(associated_clusters)
             new_cluster = cluster_merger.merge_clusters(associated_clusters)
             new_cluster.gated_measurements.append(meas)
-
-            t_merge += time.time() - t
-            t = time.time()
 
             for cluster in associated_clusters:
                 clusters.remove(cluster)
             clusters.append(new_cluster)
-
-            t_rem += time.time() - t
-
-    print("End cluster management. Number of merges: {}/{}".format(n_merges, n_merges_single))
-    print("Time. Merge: {:.2f}. Gate: {:.2f}. Remove: {:.2f}".format(t_merge, t_gate, t_rem))
     return unassociated_measurements

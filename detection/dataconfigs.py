@@ -25,18 +25,19 @@ def get_data_config(day=None, partition=None):
     return DataConfig(config[0], config[1])
 
 
-def add_data_config(day, partition, range, dt):
+def add_data_config(day, partition, radar_range_setting, dt):
     day_configs = _data_configs.setdefault(day, {})
-    day_configs[partition] = (range, dt)
+    day_configs[partition] = (int(round(radar_range_setting*RADAR_SCALE)), dt)
 
 
 _data_configs = {}
 
 # CONSTANTS:
 RADAR_IMG_SIZE = 1024
-ROTATION = 184
-RADAR_SCALE = 0.875  # radar_setting / actual range
+ROTATION = 183
+RADAR_SCALE = 200/175  # actual range / radar setting
 
 # SET CONFIGS HERE:
 add_data_config(None, None, 175, 5)
 add_data_config('2018-05-28', None, 175, 1.25)
+add_data_config('2018-05-30', None, 175, 5)
