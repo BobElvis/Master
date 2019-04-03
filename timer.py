@@ -6,16 +6,20 @@ def __print_time__(name, diff):
 class SimpleTimer:
     __slots__ = 'time', 'name'
 
-    def __init__(self):
+    def __init__(self, name=None):
         self.time = None
         self.name = None
+        if name is not None:
+            self.set(name)
 
     def set(self, name):
         self.time = time.time()
         self.name = name
 
-    def report(self):
-        __print_time__(self.name, time.time() - self.time)
+    def report(self, min=0):
+        d = time.time() - self.time
+        if d > min:
+            __print_time__(self.name, d)
 
 
 class Timer:

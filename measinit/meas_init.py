@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 
 
 class MeasInitBase:
-    def __init__(self, area, targets_per_scan, vmax):
-        self.target_density = targets_per_scan/area
+    def __init__(self, target_density, vmax):
+        self.target_density = target_density
         self.variance = (vmax/3)**2
 
     def init_measurements(self, measurements):

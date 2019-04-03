@@ -3,27 +3,49 @@ from multivariate import multi_gaussian
 from typing import Iterable, List
 
 
-class Scan(object):
-    __slots__ = 'time', 'radar_img', 'camera_img', 'mx', 'my', 'm', 'n'
+class Scan:
+    __slots__ = 'idx', 'time', 'detections', 'radar_img', 'camera_path', 'n', 'm'
 
-    def __init__(self, m, radar_img, camera_img = None, time = None):
-        self.time = time
-        self.radar_img = radar_img
-        self.camera_img = camera_img
+    def __init__(self, radar_img, detections, m, camera_path=None):
+        self.idx = None
+        self.time = None
         self.m = m
-        self.n = m.shape[0]
+        self.detections = detections
+        self.radar_img = radar_img
+        self.camera_path = camera_path
 
     def __len__(self):
-        return len(self.mx)
+        return len(self.detections)
+
+    def __getitem__(self, i):
+        return self.detections[i]
+
+
+class Detection:
+    __slots__ = 'pos', 'area', 'cnt'
+
+    def __init__(self, pos, area, cnt):
+        self.pos = pos
+        self.area = area
+        self.cnt = cnt
+
+    def __repr__(self):
+        return "({},{})".format(self[0], self[1])
+
+    def __getitem__(self, key):
+        return self.pos[key]
 
 
 class Measurement:
-    __slots__ = 'idx', 'value', 'time', 'init_speed', 'density', 'init_speed_var'
+    __slots__ = 'idx', 'time', 'detection',\
+                'init_speed', 'density', 'init_speed_var'
 
-    def __init__(self, idx, value, time, density = None, init_speed = None):
+    def __init__(self, idx, time, detection, density=None, init_speed=None):
         self.idx = idx
-        self.value = value
         self.time = time
+        self.detection = detection
+
+        # Optional properties
         self.init_speed = init_speed
         self.init_speed_var = None
         self.density = density
@@ -33,7 +55,7 @@ class Measurement:
         return meas_str
 
     def __getitem__(self, key):
-        return self.value[key]
+        return self.detection[key]
 
 
 class TrackNode:
@@ -44,7 +66,7 @@ class TrackNode:
     def __init__(self, scan_idx, parent, est_posterior, cov_posterior, target, measurement):
         # Node properties
         self.gated_measurements = {}
-        self.childrenDict = dict()
+        self.childrenDict = None
 
         # Used for extraction:
         self.scan_idx = scan_idx
@@ -77,22 +99,28 @@ class TrackNode:
     def isMeasurementGated(self, m):
         return m in self.gated_measurements
 
-    def innovateTrack(self, measurement, innovator):
+    def innovateTrack(self, detection: Detection, innovator):
+        if self.childrenDict is None:
+            self.childrenDict = dict()
+
         # Returns the new track node corresponding to the innovation of the measurement.
-        child_node = self.childrenDict.get(measurement)
+        child_node = self.childrenDict.get(detection)
 
         if child_node is None:
             # Track node does not have the measurement in already. Create it.
-            if measurement is None:
+            if detection is None:
                 est_posterior, cov_posterior = self.est_prior, self.cov_prior
             else:
-                est_posterior, cov_posterior = innovator.update(self, measurement.value)
-            child_node = TrackNode(self.scan_idx + 1, self, est_posterior, cov_posterior, self.target, measurement)
-            self.childrenDict[measurement] = child_node
+                est_posterior, cov_posterior = innovator.update(self, detection.pos)
+            child_node = TrackNode(self.scan_idx + 1, self, est_posterior, cov_posterior, self.target, detection)
+            self.childrenDict[detection] = child_node
         return child_node
 
     def children(self):
-        return self.childrenDict.values()
+        if self.childrenDict is None:
+            return []
+        else:
+            return self.childrenDict.values()
 
     def __repr__(self):
         return '{}-{}-{}'.format(self.scan_idx, self.target, self.measurement)
@@ -115,16 +143,14 @@ class TrackNode:
 
 
 class Target:
-    __slots__ = 'idx', 'source', 'leaves'
+    __slots__ = 'idx', 'leaves'
 
     def __init__(self):
         self.idx = None
-        self.source = None
         self.leaves = None
 
     def init(self, track_node):
         self.idx = track_node.measurement.idx
-        self.source = track_node
         self.leaves = [track_node]
 
     def __repr__(self):
@@ -132,21 +158,21 @@ class Target:
 
 
 class HypScan(object):
-    __slots__ = 'probability', 'parent', 'track_nodes', 'track_nodes_del'
+    __slots__ = 'probability', 'parent', 'track_nodes', 'track_nodes_del', 'ratio_max', 'K_max'
 
     def __init__(self, p: float, parent, track_nodes: List[TrackNode], track_nodes_del: List[TrackNode]):
         self.probability = p
         self.parent = parent
         self.track_nodes = track_nodes
         self.track_nodes_del = track_nodes_del
+        self.ratio_max = 0 if parent is None else parent.ratio_max
+        self.K_max = 0 if parent is None else parent.K_max
 
+    def __lt__(self, other):
+        return self.probability < other.probability
 
-class HypScanJoin(HypScan):
-    __slots__ = 'parent2'
-
-    def __init__(self, p, parent1, parent2, track_nodes, track_nodes_del):
-        super().__init__(p, parent1, track_nodes, track_nodes_del)
-        self.parent2 = parent2
+    def __repr__(self):
+        return "(p: {})".format(self.probability)
 
 
 class HypScanJoin2(HypScan):
@@ -155,6 +181,12 @@ class HypScanJoin2(HypScan):
     def __init__(self, prob, parents, track_nodes, track_nodes_del):
         super().__init__(prob, None, track_nodes, track_nodes_del)
         self.parents = parents
+
+        self.K_max = 0
+        self.ratio_max = 0
+        for par in self.parents:
+            self.K_max = max(self.K_max, par.K_max)
+            self.ratio_max = max(self.ratio_max, par.ratio_max)
 
 
 class Cluster:
@@ -166,7 +198,6 @@ class Cluster:
         self.last_idx = None
         self.targets = targets  # Targets defined in the cluster
         self.leaves = sources  # Last nodes in the tree (leaves)
-        self.sources = sources  # First nodes in the cluster.
         self.gated_measurements = gated_measurements if gated_measurements is not None else []
 
     def __repr__(self):

@@ -29,3 +29,12 @@ def contour_centroid(cnt):
     cx = int(M['m10'] / M['m00'])
     cy = int(M['m01'] / M['m00'])
     return cx, cy
+
+
+def centroid_of_centroids(detections):
+    tot_area = 0
+    pos = np.array((0, 0), dtype=np.float64)
+    for detection in detections:
+        tot_area += detection.area
+        pos += detection.pos * detection.area
+    return pos / tot_area, tot_area

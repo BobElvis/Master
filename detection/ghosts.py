@@ -3,100 +3,49 @@ import detection.split
 import cv2
 from detection.geometry import contour_centroid
 
-
-def mark_multiple(dd, m, cnts, draw_img=None):
-    n = len(cnts)
-    if n < 2:
-        return
-    dist_centroid = np.linalg.norm(m, axis=1)
-    dist_argsort = np.argsort(dist_centroid)
-    d = dist_centroid[dist_argsort]
-
-    multiple = np.round(d[1:]/d[0])
-    closest_match = multiple*d[0]
-    print(closest_match)
-    print(d[1:])
-    rel_diff = closest_match/d[1:] - 1
-    print(rel_diff)
-    print(d[1:]/closest_match - 1)
-
-    shadowed = np.logical_and(np.abs(rel_diff) < 0.1, multiple > 1)
-    return dist_argsort[1:][shadowed]
+RAD_EPS = 1*np.pi/180
 
 
+def mark_multiple(dd, positions, cnts_raw, area, area_min, range_ratio):
+    n = positions.shape[0]
 
-    return
-
-    # cnts should be (n, 2).
-    if len(cnts) < 1:
+    if n < 2 or max(area) < area_min:
         return
 
-    visible_cnts = [get_visible_contour(cnt)[0] for cnt in cnts]
-    draw_cnts = [dd.scale_measurements(cnt, reverse=True).reshape((-1, 1, 2)).astype(np.int32)
-                 for cnt in visible_cnts]
-    visible_center = np.array([contour_centroid(cnt) for cnt in draw_cnts])
-    print(visible_center)
+    data, dist = _get_multiple_data(dd, positions, cnts_raw, area)
+    is_multiple = _mark_multiple(dist, data, area_min, range_ratio)
+    return is_multiple
 
-    if draw_img is not None and True:
-        #draw_cnts = [dd.scale_measurements(cnt, reverse=True).reshape((-1, 1, 2)).astype(np.int32)
-        #             for cnt in visible_cnts]
-        cv2.drawContours(draw_img, draw_cnts, -1, (0, 255, 0, 255), thickness=1)
-        #centers = [contour_centroid(draw_cnt) for draw_cnt in draw_cnts]
-        for center in visible_center:
-            #print(np.linalg.norm(dd.scale_measurements(np.array(center).reshape((-1, 2)))))
-            cv2.circle(draw_img, (center[0], center[1]), 3, (255, 0, 0, 255))
 
-    visible_center = dd.scale_measurements(visible_center)
-    dist = np.linalg.norm(visible_center, axis=1)
-    dist_argsort = np.argsort(dist)
-    dist = dist[dist_argsort]
-    ratios = dist[1:]/dist[0]
-    print(ratios)
-    print(ratios - np.round(ratios))
+def _get_multiple_data(dd, positions, cnts_raw, area):
+    dist = np.linalg.norm(positions, axis=1)
+    cnts = [dd.scale_measurements(cnt.reshape((-1, 2))) for cnt in cnts_raw]
+    angles_cnts = [np.arctan2(cnt[:, 1], cnt[:, 0]) for cnt in cnts]  # List of list of angles
+    data = np.array(
+        [(np.amin(angles), np.amax(angles), d, area) for angles, d, area in zip(angles_cnts, dist, area)])  # nx2 array
+    return data, dist
 
-    angle_thresh = 5
 
-    if m.shape[0] < 2:
-        return
+def _mark_multiple(dists, data, area_min, range_ratio):
+    n = dists.shape[0]
 
-    angles_center = np.arctan2(m[:, 1], m[:, 0]) * 180 / np.pi
-    groups_arg = group_by_criteria(angles_center, angle_thresh)
-    for group_arg in groups_arg:
-        if len(group_arg) < 2:
+    angles_min = data[:, 0]
+    angles_max = data[:, 1]
+    dists = data[:, 2]
+
+    source = data[:, 3] >= area_min
+    delete = None
+    deleted_all = np.full((n,), False)
+
+    for i in range(n):
+        if not source[i] or deleted_all[i]:
             continue
-        # Determine if multiple:
-        m_group = m[group_arg]
-        dist = np.linalg.norm(m_group, axis=1)
-        dist_argsort = np.argsort(dist)
-        dist_sort = dist[dist_argsort]
-        ratios = dist_sort[1:] / dist_sort[0]
-        print(ratios)
-        print(ratios - np.round(ratios))
+        delete = np.logical_and(dists[i] * range_ratio < dists, angles_min[i] - RAD_EPS < angles_min,
+                                out=delete)  # Created on first
+        np.logical_and(delete, angles_max[i] + RAD_EPS > angles_max, out=delete)
+        np.logical_or(deleted_all, delete, out=deleted_all)
+    return deleted_all
 
-    return
-
-    # Scale the contours:
-    cnts = [self.dd.scale_measurements(cnt.reshape((-1, 2))) for cnt in cnts_raw]
-
-    # Calculate min-max angles:
-    angles_cnts = [np.arctan2(cnt[:, 1], cnt[:, 0]) for cnt in cnts]
-    min_max_angles = np.array([[np.amin(angles), np.amax(angles)] for angles in angles_cnts])
-    min_max_angles *= (180 / np.pi)
-    min_max_angles = np.abs(min_max_angles)
-
-    if m.shape[0] > 1:
-        angles = np.arctan2(m[:, 1], m[:, 0])
-        angles_deg = angles * 180 / np.pi
-
-        dist1 = np.linalg.norm(m, axis=1)
-        arg = self.calc_ratio(dist1)
-        ang_sort = min_max_angles[arg, :]
-        diff = ang_sort[1:] - ang_sort[0, :]
-        shadow = np.logical_and(diff[:, 0] < 0, diff[:, 1] > 0)
-        shadowed_indices = arg[1:][shadow]
-        return shadowed_indices
-    else:
-        return None
 
 
 def get_visible_contour(cnt):

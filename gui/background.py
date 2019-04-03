@@ -1,5 +1,24 @@
 import numpy as np
 import cv2
+from detection.detection import DetectData
+import util
+
+
+def createBackground(detect_data: DetectData, boundary_img, close_range=False):
+    close_r = (-150, 130, -150, 20)
+    long_r = (-175, 175, -175, 50)
+    limits = close_r if close_range else long_r
+
+    data_config = detect_data.data_config
+    background = Background(data_config.radar_range, limits[:2], limits[2:], out_size=1024)
+    background.add_image(util.readImg("satellite/190.jpg"), 190)
+    #background.add_overlay(detect_data.sat_mask, color=(0, 1, 0, 0.3), extent=data_config.radar_range)
+    #background.add_overlay(detect_data.avg_mask, color=(1, 0, 1, 0.3), extent=data_config.radar_range)
+    if detect_data.shore_mask is not None and False:
+        background.add_overlay(detect_data.shore_mask, (0, 1, 1, 0.3), extent=data_config.radar_range)
+    #background.add_image(boundary_img, extent=data_config.radar_range)
+    #background.add_overlay(readMask("land/landSat190impassable.png"), color=(1, 1, 1, 0.7), extent=190)
+    return background
 
 
 def mask2img(mask, color):
@@ -30,6 +49,10 @@ class Background:
     def add_image(self, img, extent, alpha=1.):
         img = img.astype(float) / np.amax(img)
         img = np.dstack((img, np.full(img.shape[0:2], alpha)))
+        self.__add_image__(img, extent)
+
+    def add_image_alpha(self, img, extent):
+        img = img.astype(float)
         self.__add_image__(img, extent)
 
     def add_overlay(self, mask, color, extent):

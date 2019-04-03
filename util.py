@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+import os.path as path
+import pickle
 
 
 def readImg(path):
@@ -61,7 +63,6 @@ def calc_extents(img, ext, idxs):
     y2 = idxs[3]/img.shape[1] * (ext[3] - ext[2]) + ext[2]
     return (x1, x2, y1, y2)
 
-
 def crop_img(img, idxs):
     new_img = img[idxs[0]:idxs[1] + 1, idxs[2]:idxs[3] + 1]
     return new_img
@@ -90,10 +91,70 @@ def create_range_mask(fill_range, out_range, resolution):
     return d > fill_range
 
 
-def show_heatmap(a):
-    plt.imshow(a, cmap='hot', interpolation='nearest')
-    plt.colorbar()
-    plt.show()
+def show_mask(a, bg=None, show=True):
+    pass
+
+
+def show_heatmap(a, bg=None, alpha_mask=None, show=True, axes=False):
+    if bg is None:
+        fig = plt.imshow(a, cmap='hot')
+        plt.colorbar()
+    else:
+        cm = plt.get_cmap('hot')
+        a_scaled = a.astype(float)/np.amax(a)
+        img = cm(a_scaled)
+        if alpha_mask is None:
+            img[a == 0, 3] = 0
+        else:
+            img[alpha_mask, 3] = 0
+        bg.add_image_alpha(img, bg.radar_range)
+        img_out, _ = bg.get_img()
+        img_out = crop_img(img_out, (450, 950, 100, 900))
+        fig = plt.imshow(img_out)
+        sm = plt.cm.ScalarMappable(cmap=cm)
+        sm.set_array(a)
+        plt.colorbar(sm)
+    if show:
+        plt.show()
+    if not axes:
+        fig.axes.get_xaxis().set_visible(False)
+        fig.axes.get_yaxis().set_visible(False)
+
+
+def save_data(data, filename):
+    filehandler = open(filename + ".obj", 'wb')
+    success = False
+    print("Saving...")
+    while not success:
+        try:
+            pickle.dump(data, filehandler, protocol=pickle.HIGHEST_PROTOCOL)
+            success = True
+        except RecursionError:
+            print("Recursion error. max:{}".format(sys.getrecursionlimit()))
+            sys.setrecursionlimit(sys.getrecursionlimit() * 2)
+    filehandler.close()
+    print("Saved successfully to '{}'".format(filename))
+
+
+def load_data(filename):
+    try:
+        print("Restoring {}...".format(filename))
+        filehandler = open(filename + ".obj", 'rb')
+    except FileNotFoundError:
+        print("File {} not found..".format(filename))
+        raise FileNotFoundError
+    return pickle.load(filehandler)
+
+
+def get_filename(root, basename, newfile, number=None):
+    if newfile or number is None:
+        import dataset
+        files = dataset.find_files(root, extension="obj")
+        files = [(f, int(f.split(basename)[1])) for f in files if f.startswith(basename)]
+        files_sorted = sorted(files, key=lambda x: x[1])
+        top_number = int(files_sorted[-1][1])
+        number = top_number + 1 if newfile else top_number
+    return path.join(root, "{} {}".format(basename, number))
 
 
 def print_np(matrix):

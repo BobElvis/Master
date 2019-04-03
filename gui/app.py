@@ -9,7 +9,7 @@ from matplotlib.figure import Figure
 
 from gui.figures import *
 from timer import *
-from functools import partial
+from dataloader import BaseLoader
 tim = SimpleTimer()
 
 
@@ -20,19 +20,21 @@ class Callable:
     def __call__(self, *args, **kwargs):
         pass
 
+
 class DynApp(QWidget):
-    def __init__(self, dataloader, background, i=0, show_camera = True):
+    def __init__(self, dataloader: BaseLoader, background, i=0, show_camera = True):
         super().__init__()
         self.dataloader = dataloader
-        self.idx_edit_width = 75
+        self.idx_edit_width = 125
         self.cam_edit_width = 100
+        self.lag = 0
 
         # State:
         self.draw_pending = False
         self.i = i
 
         # UI elements
-        self.layoutWrapper = QVBoxLayout()
+        self.layoutWrapper = QVBoxLayout() # Contains toolbar and content
         self.layoutToolbar = QHBoxLayout()
         self.layoutContent = QHBoxLayout()
 
@@ -41,7 +43,9 @@ class DynApp(QWidget):
         self.nextBtn = QPushButton("Next")
         self.prevMeasBtn = QPushButton("Prev Meas")
         self.nextMeasBtn = QPushButton("Next Meas")
+        self.timeLabel = QLabel("----")
         self.idxEdit = QLineEdit()
+        self.lagEdit = QLineEdit()
 
         # Camera:
         self.camShowBox = QCheckBox("Cam")
@@ -86,15 +90,18 @@ class DynApp(QWidget):
         self.layoutToolbar.setAlignment(Qt.AlignCenter)
         self.layoutToolbar.addWidget(self.camShowBox)
         self.layoutToolbar.addWidget(self.improveCamBox)
+        self.layoutToolbar.addWidget(self.lagEdit)
         self.layoutToolbar.addWidget(self.prevBtn)
         self.layoutToolbar.addWidget(self.nextBtn)
         self.layoutToolbar.addWidget(self.prevMeasBtn)
         self.layoutToolbar.addWidget(self.nextMeasBtn)
         for edit in self.edit_lim:
             self.layoutToolbar.addWidget(edit)
-            edit.setFixedWidth(self.idx_edit_width*1.1)
+            edit.setFixedWidth(self.idx_edit_width*0.75)
+        self.layoutToolbar.addWidget(self.timeLabel)
         self.layoutToolbar.addWidget(self.idxEdit)
 
+        self.timeLabel.setFixedWidth(self.idx_edit_width*2)
         self.idxEdit.setFixedWidth(self.idx_edit_width)
         self.layoutWrapper.addLayout(self.layoutToolbar)
         self.layoutWrapper.addLayout(self.layoutContent)
@@ -104,6 +111,7 @@ class DynApp(QWidget):
         self.setWindowTitle("Surveillance")
 
     def setListeners(self):
+        self.connect(self.lagEdit.editingFinished, self.onLagEdit)
         self.connect(self.prevBtn.clicked, self.prev)
         self.connect(self.nextBtn.clicked, self.next)
         self.connect(self.prevMeasBtn.clicked, self.prevMeas)
@@ -144,11 +152,21 @@ class DynApp(QWidget):
 
     def change_idx(self, i):
         prev_i = self.i
-        self.i = i % len(self.dataloader)
-        self.on_idx_changed(i, prev_i)
+        self.i = min(i, len(self.dataloader)-1)
+        self.on_idx_changed(self.i, prev_i)
 
     def on_idx_changed(self, curr_i, prev_i):
-        self.main_view.set_scan(self.dataloader[self.i])
+        scan = self.dataloader[self.i]
+
+        # LAG:
+        lag_idx = max(0, curr_i - self.lag)
+        lag_image = scan.radar_img
+        for i in range(lag_idx, curr_i):
+            lag_image += self.dataloader[i].radar_img
+        scan.radar_img = lag_image
+
+        self.main_view.set_scan(scan)
+        self.timeLabel.setText(str(scan.time))
         self.idxEdit.setText(str(curr_i))
         self.draw()
 
@@ -182,12 +200,16 @@ class DynApp(QWidget):
         while True:
             i = (i + di) % len(self.dataloader)
             item = self.dataloader[i]
-            if item.n > 0:
+            if len(item) > 0:
                 break
         self.change_idx(i)
 
     def onIdxEdit(self):
         self.change_idx(int(float(self.idxEdit.text())))
+
+    def onLagEdit(self):
+        self.lag = int(float(self.lagEdit.text()))
+        self.on_idx_changed(self.i, self.i)
 
     def closeEvent(self, e):
         self.settings.setValue("size", self.size())
@@ -199,6 +221,21 @@ class DynApp(QWidget):
         self.draw_pending = True
         if now:
             self.main_view.update_view(True, True)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key_Right:
+            self.next()
+            self.on_event()
+        elif key == Qt.Key_Left:
+            self.prev()
+            self.on_event()
+        elif key == Qt.Key_Up:
+            self.nextMeas()
+            self.on_event()
+        elif key == Qt.Key_Down:
+            self.prevMeas()
+            self.on_event()
 
 
 class ComboView(FigureCanvas):
@@ -253,7 +290,6 @@ class ComboView(FigureCanvas):
         self.radarFig.set_data(scan)
 
     def update_view(self, radar=True, camera=True, force_full = False):
-        tim.set("Draw")
         if force_full or self.first:
            self.draw()
            self.first = False
@@ -264,7 +300,6 @@ class ComboView(FigureCanvas):
                 self.radarFig.draw_artists()
             self.figure.canvas.update()
             self.figure.canvas.flush_events()
-        tim.report()
 
     def __createRadarFig__(self, ax, background):
         return RadarFig(ax, background)

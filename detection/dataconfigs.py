@@ -10,24 +10,19 @@ class DataConfig:
             .format(self.radar_range, self.rotation, self.dt)
 
 
-def get_data_config(day=None, partition=None):
+def get_data_config(folder):
     # Returns most specific data config.
-    day_configs = _data_configs.get(day)
-    if day_configs is None:
-        print("WARNING: Config for {}:{} not found. Returning default".format(day, partition))
+    day_config = _data_configs.get(folder)
+    if day_config is None:
+        print("WARNING: Config for {} not found. Returning default".format(folder))
         config = _data_configs.get(None)
     else:
-        partition_config = day_configs.get(partition)
-        if partition_config is None:
-            config = day_configs.get(None)
-        else:
-            config = partition_config
+        config = day_config
     return DataConfig(config[0], config[1])
 
 
-def add_data_config(day, partition, radar_range_setting, dt):
-    day_configs = _data_configs.setdefault(day, {})
-    day_configs[partition] = (int(round(radar_range_setting*RADAR_SCALE)), dt)
+def add_data_config(folder, radar_range_setting, dt):
+    _data_configs[folder] = (int(round(radar_range_setting*RADAR_SCALE)), dt)
 
 
 _data_configs = {}
@@ -38,6 +33,6 @@ ROTATION = 183
 RADAR_SCALE = 200/175  # actual range / radar setting
 
 # SET CONFIGS HERE:
-add_data_config(None, None, 175, 5)
-add_data_config('2018-05-28', None, 175, 1.25)
-add_data_config('2018-05-30', None, 175, 5)
+add_data_config(None, 175, 5)
+add_data_config('2018-05-28', 175, 1.25)
+add_data_config('2018-05-30', 175, 5)

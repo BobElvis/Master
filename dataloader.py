@@ -4,6 +4,7 @@ import util
 import threading
 import time
 import abc
+from timer import SimpleTimer
 
 
 class DataSource:
@@ -14,40 +15,10 @@ class DataSource:
         pass
 
 
-class MHTLoader(object):
-    def __init__(self, mht, dataloader, i_start = 0, disabled=False):
-        self.mht = mht
-        self.mht_data = mht.mht_data
-        self.dataloader = dataloader
-        self.min_idx = i_start
-        self.loaded_idx = i_start
-        self.disabled = disabled
-        if not disabled:
-            mht.step(dataloader[i_start])
-
-    def __getitem__(self, idx):
-        if self.disabled:
-            return None
-        for i in range(self.loaded_idx + 1, idx + 1):
-            self.mht.step(self.dataloader[i])
-        self.loaded_idx = max(self.loaded_idx, idx)
-        return self.mht_data.get_data(idx)
-
-    def gen_to(self, idx):
-        if self.disabled:
-            return self.mht_data.get_data(idx)
-        for i in range(self.loaded_idx + 1, idx + 1):
-            self.mht.step(self.dataloader[i])
-            self.loaded_idx = i
-            yield i, self.mht_data.get_data(i)
-        self.loaded_idx = max(self.loaded_idx, idx)
-
-
-class SimpleDataloader(object):
+class BaseLoader:
     # Caches last retrieved item
 
-    def __init__(self, data_source: DataSource):
-        self.data_source = data_source
+    def __init__(self):
         self.lastIdx = None
         self.lastItem = None
 
@@ -58,10 +29,49 @@ class SimpleDataloader(object):
         return self.lastItem
 
     def load_item(self, idx):
-        print("############# Loading item {} ###############".format(idx))
-        scan = self.data_source.load_data(idx)
-        scan.time = idx
-        return scan
+        raise NotImplementedError()
+
+    def __len__(self):
+        raise NotImplementedError()
+
+
+class MHTLoader(BaseLoader):
+
+    def __init__(self, mht, dataloader, i_start=0, disabled=False):
+        super().__init__()
+        self.mht = mht
+        self.mht_data = mht.mht_data
+        self.dataloader = dataloader
+        self.loaded_idx = i_start - 1
+        self.disabled = disabled
+
+    def load_item(self, idx):
+        if self.disabled:
+            return self.mht_data.get_data(idx)
+        t = SimpleTimer()
+        t.set("Loading mht")
+        for i in range(self.loaded_idx + 1, idx + 1):
+            self.mht.step(self.dataloader[i])
+        t.report(1)
+        self.loaded_idx = max(self.loaded_idx, idx)
+        return self.mht_data.get_data(idx)
+
+    def __len__(self):
+        len(self.dataloader)
+
+
+class SimpleDataloader(BaseLoader):
+    # Caches last retrieved item
+
+    def __init__(self, data_source: DataSource):
+        super().__init__()
+        self.data_source = data_source
+        self.lastIdx = None
+        self.lastItem = None
+
+    def load_item(self, idx):
+        item = self.data_source.load_data(idx)
+        return item
 
     def __len__(self):
         return len(self.data_source)

@@ -5,6 +5,8 @@ import gui.background as bg
 from gui.image_draw import BackgroundDrawer
 
 import timer
+import util
+from matplotlib.axes import Axes
 t = timer.SimpleTimer()
 
 
@@ -33,7 +35,8 @@ class CameraFig(object):
         self.improve_camera = False
 
     def set_data(self, scan):
-        data = scan.camera_img
+        path = scan.camera_path
+        data = None if path is None else util.readImg(path)
 
         if data is None:
             data = np.zeros((1,1))
@@ -68,7 +71,7 @@ class CameraFig(object):
 
 
 class RadarFig(object):
-    def __init__(self, ax, background):
+    def __init__(self, ax: Axes, background):
         self.ax = ax
         self.range = background.radar_range
         bg, ext = background.get_img()
@@ -80,6 +83,10 @@ class RadarFig(object):
         self.ax.set_ylabel('North')
         self.set_lims(background.x_lim, background.y_lim)
         self.ax.title.set_visible(False)
+
+        self.show_meas_idx = False
+        self.h_text_meas = [] if self.show_meas_idx else None
+        self.h_text_meas_n = 0
 
     def on_resize(self):
         self.bg_wrapper.reset()
@@ -111,11 +118,25 @@ class RadarFig(object):
             self.hMeas.set_xdata(mx)
             self.hMeas.set_ydata(my)
 
+        # Text:
+        if self.show_meas_idx:
+            for i in range(len(scan)):
+                x, y = mx[i], my[i]
+                if i >= len(self.h_text_meas):
+                    self.h_text_meas.append(self.ax.text(x, y, str(i+1), color='white', fontsize=15))
+                else:
+                    #self.h_text_meas[i] = self.ax.text(x, y, str(i), color='white', fontsize=15)
+                    self.h_text_meas[i].set_position((x, y))
+            self.h_text_meas_n = len(scan)
+
     def draw_artists(self):
         self.bg_wrapper.draw(self.ax._cachedRenderer)
         if self.hRadarData is not None:
             self.hRadarData.draw(self.ax._cachedRenderer)
         self.ax.draw_artist(self.hMeas)
+
+        for i in range(self.h_text_meas_n):
+            self.ax.draw_artist(self.h_text_meas[i])
 
     def get_aspect(self):
         x_lim, y_lim = self.get_lims()
@@ -151,7 +172,7 @@ class TrackFig(RadarFig):
                 pos[j, :] = self.meas_model.H.dot(track_node.est_posterior)
                 missed[j] = track_node.measurement is None
 
-            if alive:
+            if alive and self.track_gate is not None:
                 if self.gate_one_behind and len(track) > 1:
                     node = track[-2]
                 else:
@@ -161,13 +182,16 @@ class TrackFig(RadarFig):
                     if node.i_det is not None:
                         print("I: {:.3f}, {:.3f}:{:.3f}:{:.3f}".
                             format(node.i_det, node.PD, 1-node.PD-node.PX, node.PX))
-                    plot_style = '-'
                     gate_x, gate_y = self.track_gate.get_2D_gate(node)
                     z_hat = np.reshape(node.z_hat, (1, 2))
             else:
-                plot_style = '--'
                 gate_x, gate_y = [], []
                 z_hat = np.zeros((0, 2))
+
+            if alive:
+                plot_style = '-'
+            else:
+                plot_style = '--'
 
             m = pos[np.logical_not(missed), :]
             n = pos[missed, :]

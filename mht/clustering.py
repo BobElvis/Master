@@ -3,39 +3,39 @@ import numpy as np
 import math
 from model.model import *
 import sys
+from mht.pruning import Pruner
 
 INT_MAX = 10000000
 P_CONSTANT = math.exp(-0.5)
 
 
-def mergeClusters(clusters):
-    # TODO: If more than two, combine all to one super-cluster instead of "stacked" double-clusters
-    # TODO: Will probably depend of what is most compatible with pruning.
-    cluster = None
-    for c in clusters:
-        if cluster is None:
-            cluster = c
-        else:
-            cluster = Cluster.fromMerge(cluster, c)
-    return cluster
-
-
 class ClusterMerger:
-    __slots__ = 't_nodes', 't_nodes_del', 'parents', 'clusters', 'n', 'leaves'
+    __slots__ = 't_nodes', 't_nodes_del', 'parents', 'clusters', 'n', 'leaves',\
+                'low_K', 'min_p', 'pruner'
 
-    def __init__(self):
+    def __init__(self, pruner):
         self.t_nodes = []
         self.t_nodes_del = []
         self.parents = []
         self.clusters = None
         self.n = 0
         self.leaves = []
+        self.pruner = pruner
+        self.low_K = None
+        self.min_p = None
 
     def merge_clusters(self, clusters):
         c = clusters[0]
 
+        # Calculate maximum probability (cluster leaves must be sorted):
+        self.min_p = 1
+        for cluster in clusters:
+            self.min_p *= cluster.leaves[0].probability
+        self.min_p /= self.pruner.ratio_pruning
+
         # Hypothesises:
         self.leaves = []
+        self.low_K = 1e15
         self.clusters = clusters
         self.n = len(clusters)
         for hyp in c.leaves:
@@ -46,29 +46,30 @@ class ClusterMerger:
         first_idx = c.first_idx
         targets = c.targets.copy()
         g_meas = c.gated_measurements.copy()
-        n_hyps = len(c.leaves)
         for i in range(1, len(clusters)):
             c = clusters[i]
             first_idx = min(first_idx, c.first_idx)
             targets.extend(c.targets)
             g_meas.extend(c.gated_measurements)
-            n_hyps = n_hyps * len(c.leaves)
-        assert len(self.leaves) == n_hyps
+        self.leaves, _ = self.pruner.prune_ratio(self.leaves)
+        self.leaves = self.pruner.prune_K_best(self.leaves)
         return Cluster(first_idx, self.leaves, targets, g_meas)
 
     def __aux__(self, hyp, i, p):
         self.t_nodes.append(hyp.track_nodes)
         self.t_nodes_del.append(hyp.track_nodes_del)
-        self.parents.append(hyp.parent)
+        self.parents.append(hyp)
 
         p = p * hyp.probability
         if i == self.n:
-            t_nodes, t_nodes_del = [], []
-            for t_nodes_list in self.t_nodes:
-                t_nodes.extend(t_nodes_list)
-            for t_nodes_list in self.t_nodes_del:
-                t_nodes_del.extend(t_nodes_list)
-            self.leaves.append(HypScanJoin2(p, self.parents.copy(), t_nodes, t_nodes_del))
+            if p >= self.min_p:
+                t_nodes, t_nodes_del = [], []
+                for t_nodes_list in self.t_nodes:
+                    t_nodes.extend(t_nodes_list)
+                for t_nodes_list in self.t_nodes_del:
+                    t_nodes_del.extend(t_nodes_list)
+                node = HypScanJoin2(p, self.parents.copy(), t_nodes, t_nodes_del)
+                self.leaves.append(node)
         else:
             for hyp2 in self.clusters[i].leaves:
                 self.__aux__(hyp2, i+1, p)
@@ -78,21 +79,14 @@ class ClusterMerger:
         self.parents.pop()
 
 
-def cluster_gating(clusters, measurements, track_gate_gamma):
+def cluster_gating(clusters, measurements, track_gate_gamma, pruner: Pruner):
     # clusters are changed in place.
-    print("Cluster management: Clusters: {}, Measurements: {}".format(len(clusters), len(measurements)))
 
-    cluster_merger = ClusterMerger()
+    cluster_merger = ClusterMerger(pruner)
 
     # --- Clear the gated measurements for the cluster: ---
     for cluster in clusters:
         cluster.gated_measurements.clear()
-
-    n_merges = 0
-    n_merges_single = 0
-    t_merge = 0
-    t_gate = 0
-    t_rem = 0
 
     # --- Temp arrays ---
     nu = np.empty((2,), dtype=np.float64)
@@ -102,6 +96,7 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
     unassociated_measurements = []
     associated_clusters = []
     for meas in measurements:
+        pos = meas.detection.pos
         associated_clusters.clear()
         for cluster in clusters:
             cluster_associated_w_meas = False
@@ -110,7 +105,7 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
                     assert not t_node.isPosterior, '{}'.format(t_node)
 
                     # Calculate gate value:
-                    np.subtract(meas.value, t_node.z_hat, out=nu)
+                    np.subtract(pos, t_node.z_hat, out=nu)
                     np.dot(t_node.Binv, nu, out=B1)
                     gate_value = np.dot(nu.T, B1)
 
@@ -119,7 +114,7 @@ def cluster_gating(clusters, measurements, track_gate_gamma):
                         if not cluster_associated_w_meas:
                             associated_clusters.append(cluster)
                             cluster_associated_w_meas = True
-                        p = (P_CONSTANT ** gate_value) * t_node.mg * t_node.area_scale
+                        p = (P_CONSTANT ** gate_value) * t_node.mg
                         t_node.gated_measurements[meas] = p
 
         # Number of clusters associated for measurement:
